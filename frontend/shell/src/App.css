@@ -1,0 +1,156 @@
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 32px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(71, 158, 245, 0.14),
+      transparent 36%
+    ),
+    var(--colorNeutralBackground2);
+}
+
+.app-header {
+  max-width: 1440px;
+  margin: 0 auto 28px;
+}
+
+.app-header h1 {
+  margin: 6px 0 8px;
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  line-height: 1.05;
+}
+
+.app-header p {
+  max-width: 760px;
+  color: var(--colorNeutralForeground2);
+  font-size: 1.05rem;
+}
+
+.eyebrow {
+  color: var(--colorBrandForeground1);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+}
+
+main {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(420px, 1.4fr);
+  gap: 24px;
+  margin-bottom: 36px;
+}
+
+.request-panel,
+.result-panel {
+  min-width: 0;
+}
+
+.request-panel {
+  padding: 24px;
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: 16px;
+  background: var(--colorNeutralBackground1);
+  box-shadow: var(--shadow4);
+}
+
+.request-panel h2,
+section h2 {
+  margin-top: 0;
+}
+
+.request-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.result-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.response-card {
+  min-height: 420px;
+  padding: 24px;
+}
+
+.response-content {
+  margin-top: 20px;
+  padding: 20px;
+  border-left: 4px solid var(--colorBrandStroke1);
+  border-radius: 8px;
+  background: var(--colorNeutralBackground3);
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.progress-list {
+  margin: 20px 0;
+  padding-left: 26px;
+  color: var(--colorNeutralForeground2);
+}
+
+.progress-list li {
+  margin-bottom: 10px;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.error-code {
+  color: var(--colorPaletteRedForeground1);
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    padding: 20px;
+  }
+
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .response-card {
+    min-height: 300px;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell {
+    padding: 14px;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .request-panel,
+  .response-card {
+    padding: 18px;
+  }
+}

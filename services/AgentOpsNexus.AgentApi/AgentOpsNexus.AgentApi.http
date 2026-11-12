@@ -1,0 +1,6 @@
+@AgentOpsNexus.AgentApi_HostAddress = http://localhost:5034
+
+GET {{AgentOpsNexus.AgentApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
