@@ -1,6 +1,8 @@
 using AgentOpsNexus.AgentApi.Agents;
 using AgentOpsNexus.AgentApi.Configuration;
 using AgentOpsNexus.AgentApi.Repositories;
+using AgentOpsNexus.AgentApi.Services.Deployments;
+using AgentOpsNexus.AgentApi.Tools;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -44,10 +46,13 @@ builder.Services
                     out _)
                 &&
                 !string.IsNullOrWhiteSpace(
-                    options.ModelDeployment);
+                    options.ModelDeployment)
+                &&
+                !string.IsNullOrWhiteSpace(
+                    options.TenantId);
         },
         "Agent provider must be Mock or Foundry. " +
-        "Foundry requires ProjectEndpoint and ModelDeployment.")
+        "Foundry requires ProjectEndpoint, ModelDeployment, and TenantId.")
     .ValidateOnStart();
 
 builder.Services.Configure<ApiBehaviorOptions>(options =>
@@ -74,10 +79,36 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
     };
 });
 
+/*
+ * Request-history storage.
+ *
+ * This remains in memory for the current milestone.
+ */
 builder.Services.AddSingleton<
     IAgentRequestRepository,
     InMemoryAgentRequestRepository>();
 
+/*
+ * Deployment evidence provider.
+ *
+ * The mock implementation returns deterministic demonstration records.
+ * A future implementation can replace this with an Azure DevOps or GitHub
+ * deployment adapter without changing DeploymentTools.
+ */
+builder.Services.AddSingleton<
+    IDeploymentEvidenceService,
+    MockDeploymentEvidenceService>();
+
+/*
+ * Read-only Agent Framework tool.
+ */
+builder.Services.AddSingleton<DeploymentTools>();
+
+/*
+ * Both agent implementations remain registered.
+ *
+ * AgentOptions.Provider controls which one is exposed as IIncidentAgent.
+ */
 builder.Services.AddSingleton<MockIncidentAgent>();
 builder.Services.AddSingleton<FoundryIncidentAgent>();
 
@@ -125,38 +156,49 @@ app.UseCors("Frontend");
 
 app.MapControllers();
 
-app.MapGet("/", (
-    IOptions<AgentOptions> options) =>
-{
-    return Results.Ok(new
+app.MapGet(
+    "/",
+    (IOptions<AgentOptions> options) =>
     {
-        service = "AgentOpsNexus.AgentApi",
-        status = "Running",
-        agentProvider = options.Value.Provider,
-        modelDeployment =
+        var usingFoundry =
             string.Equals(
                 options.Value.Provider,
                 "Foundry",
-                StringComparison.OrdinalIgnoreCase)
-                ? options.Value.ModelDeployment
-                : null,
-        frontend = "http://localhost:5173",
-        health = "/health",
-        requestsApi = "/api/v1/requests"
-    });
-});
+                StringComparison.OrdinalIgnoreCase);
 
-app.MapGet("/health", (
-    IOptions<AgentOptions> options) =>
-{
-    return Results.Ok(new
-    {
-        status = "Healthy",
-        service = "AgentOpsNexus.AgentApi",
-        agentProvider = options.Value.Provider,
-        timestamp = DateTimeOffset.UtcNow
+        return Results.Ok(
+            new
+            {
+                service = "AgentOpsNexus.AgentApi",
+                status = "Running",
+                agentProvider = options.Value.Provider,
+                modelDeployment =
+                    usingFoundry
+                        ? options.Value.ModelDeployment
+                        : null,
+                groundedDeploymentTool = usingFoundry,
+                deploymentEvidenceProvider =
+                    "MockDeploymentEvidenceService",
+                frontend = "http://localhost:5173",
+                health = "/health",
+                requestsApi = "/api/v1/requests"
+            });
     });
-});
+
+app.MapGet(
+    "/health",
+    (IOptions<AgentOptions> options) =>
+    {
+        return Results.Ok(
+            new
+            {
+                status = "Healthy",
+                service = "AgentOpsNexus.AgentApi",
+                agentProvider = options.Value.Provider,
+                deploymentTool = "GetRecentDeployments",
+                timestamp = DateTimeOffset.UtcNow
+            });
+    });
 
 app.Run();
 

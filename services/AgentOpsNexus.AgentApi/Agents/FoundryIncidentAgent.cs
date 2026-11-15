@@ -4,9 +4,11 @@ using AgentOpsNexus.AgentApi.Configuration;
 using AgentOpsNexus.AgentApi.Contracts;
 using AgentOpsNexus.AgentApi.Domain;
 using AgentOpsNexus.AgentApi.Prompts;
+using AgentOpsNexus.AgentApi.Tools;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 
 namespace AgentOpsNexus.AgentApi.Agents;
@@ -19,6 +21,7 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
 
     public FoundryIncidentAgent(
         IOptions<AgentOptions> options,
+        DeploymentTools deploymentTools,
         ILogger<FoundryIncidentAgent> logger)
     {
         _options = options.Value;
@@ -33,48 +36,79 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
                 "Agent:ProjectEndpoint is not a valid absolute URI.");
         }
 
-        if (string.IsNullOrWhiteSpace(_options.ModelDeployment))
+        if (string.IsNullOrWhiteSpace(
+                _options.ModelDeployment))
         {
             throw new InvalidOperationException(
                 "Agent:ModelDeployment is required for the Foundry provider.");
         }
 
-        if (string.IsNullOrWhiteSpace(_options.TenantId))
+        if (string.IsNullOrWhiteSpace(
+                _options.TenantId))
         {
             throw new InvalidOperationException(
                 "Agent:TenantId is required for browser authentication.");
         }
 
-        var credential = new InteractiveBrowserCredential(
-            new InteractiveBrowserCredentialOptions
-            {
-                TenantId = _options.TenantId,
-                RedirectUri = new Uri("http://localhost")
-            });
+        /*
+         * Interactive browser authentication is used for local development.
+         *
+         * The tenant is specified explicitly so authentication does not get
+         * routed to an unrelated Microsoft Services tenant.
+         */
+        var credential =
+            new InteractiveBrowserCredential(
+                new InteractiveBrowserCredentialOptions
+                {
+                    TenantId = _options.TenantId,
+                    RedirectUri =
+                        new Uri("http://localhost")
+                });
 
-        var projectClient = new AIProjectClient(
-            projectEndpoint,
-            credential);
+        var projectClient =
+            new AIProjectClient(
+                projectEndpoint,
+                credential);
+
+        /*
+         * Convert the validated read-only deployment method into an
+         * Agent Framework function tool.
+         */
+        var getRecentDeploymentsTool =
+            AIFunctionFactory.Create(
+                deploymentTools.GetRecentDeploymentsAsync,
+                name: "GetRecentDeployments");
 
         /*
          * This is a code-first agent.
          *
-         * The application owns the instructions and orchestration.
-         * This does not create a separate portal-managed agent.
+         * The application owns:
+         * - instructions,
+         * - tools,
+         * - validation,
+         * - timeouts,
+         * - streaming,
+         * - governance.
          */
         _agent = projectClient.AsAIAgent(
             model: _options.ModelDeployment,
             name: "AgentOpsNexusIncidentAgent",
-            instructions: IncidentAgentInstructions.Value);
+            instructions:
+                IncidentAgentInstructions.Value,
+            tools:
+            [
+                getRecentDeploymentsTool
+            ]);
     }
 
-    public async IAsyncEnumerable<AgentStreamEvent> InvestigateAsync(
-        AgentRequestRecord request,
-        [EnumeratorCancellation]
-        CancellationToken cancellationToken)
+    public async IAsyncEnumerable<AgentStreamEvent>
+        InvestigateAsync(
+            AgentRequestRecord request,
+            [EnumeratorCancellation]
+            CancellationToken cancellationToken)
     {
         /*
-         * Preserve the Milestone 1 failure simulation.
+         * Preserve the Milestone 1 failure-injection capability.
          */
         if (request.SimulateFailure)
         {
@@ -84,35 +118,33 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
 
         yield return CreateEvent(
             "agent.started",
-            "Real GenAI investigation started using Microsoft Foundry.");
+            "Grounded GenAI investigation started using Microsoft Foundry.");
 
         yield return CreateEvent(
             "agent.progress",
-            "Preparing a bounded incident-analysis request.");
+            "The agent may call the read-only deployment evidence tool.");
 
         /*
-         * Create a linked token that responds to both:
+         * Combine:
          *
          * 1. Browser/client cancellation.
-         * 2. The configured backend timeout.
+         * 2. Configured server-side timeout.
          */
         using var timeoutSource =
             CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken);
 
         timeoutSource.CancelAfter(
-            TimeSpan.FromSeconds(_options.TimeoutSeconds));
+            TimeSpan.FromSeconds(
+                _options.TimeoutSeconds));
 
         var stopwatch = Stopwatch.StartNew();
         var prompt = BuildPrompt(request);
         var receivedContent = false;
 
         /*
-         * Obtain the asynchronous enumerator manually.
-         *
-         * C# does not allow yield return inside a try block that has catch
-         * clauses. MoveNextAsync is therefore protected by try/catch, while
-         * yield return remains outside it.
+         * The enumerator is consumed manually because C# does not permit
+         * yield return inside a try block that contains catch clauses.
          */
         await using var enumerator = _agent
             .RunStreamingAsync(prompt)
@@ -125,7 +157,8 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
 
             try
             {
-                hasNext = await enumerator.MoveNextAsync();
+                hasNext =
+                    await enumerator.MoveNextAsync();
             }
             catch (OperationCanceledException)
                 when (cancellationToken.IsCancellationRequested)
@@ -133,14 +166,14 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
                 stopwatch.Stop();
 
                 _logger.LogInformation(
-                    "Foundry investigation {RequestId} was cancelled by " +
-                    "the client after {ElapsedMilliseconds} ms.",
+                    "Foundry investigation {RequestId} was cancelled " +
+                    "by the client after {ElapsedMilliseconds} ms.",
                     request.Id,
                     stopwatch.ElapsedMilliseconds);
 
                 /*
-                 * The controller handles this exception and marks the
-                 * request as Cancelled.
+                 * The controller marks client-cancelled requests as
+                 * Cancelled.
                  */
                 throw;
             }
@@ -156,7 +189,7 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
                     _options.TimeoutSeconds);
 
                 throw new TimeoutException(
-                    $"The GenAI investigation exceeded the configured " +
+                    $"The grounded GenAI investigation exceeded the " +
                     $"{_options.TimeoutSeconds}-second time limit.");
             }
             catch (Exception exception)
@@ -182,7 +215,8 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
             var content = update.ToString();
 
             /*
-             * Some streaming events may contain only metadata.
+             * Some streaming updates contain metadata rather than
+             * user-visible text.
              */
             if (string.IsNullOrWhiteSpace(content))
             {
@@ -191,10 +225,6 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
 
             receivedContent = true;
 
-            /*
-             * The controller forwards this event to React through
-             * Server-Sent Events.
-             */
             yield return CreateEvent(
                 "agent.message.delta",
                 content);
@@ -215,15 +245,16 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
         stopwatch.Stop();
 
         _logger.LogInformation(
-            "Foundry investigation {RequestId} completed using " +
-            "deployment {ModelDeployment} in {ElapsedMilliseconds} ms.",
+            "Grounded Foundry investigation {RequestId} completed " +
+            "using deployment {ModelDeployment} in " +
+            "{ElapsedMilliseconds} ms.",
             request.Id,
             _options.ModelDeployment,
             stopwatch.ElapsedMilliseconds);
 
         yield return CreateEvent(
             "agent.completed",
-            $"Real GenAI investigation completed in " +
+            $"Grounded GenAI investigation completed in " +
             $"{stopwatch.Elapsed.TotalSeconds:F1} seconds.");
     }
 
@@ -242,19 +273,42 @@ public sealed class FoundryIncidentAgent : IIncidentAgent
             Reported severity:
             {{request.Severity}}
 
-            Important constraints:
+            Investigation requirements:
 
-            - No telemetry evidence has been supplied in this milestone.
-            - Do not claim that any system, deployment, log, trace, metric,
-              runbook, database, or source repository was accessed.
-            - Treat all root-cause statements as unverified hypotheses.
-            - Recommend collecting evidence before consequential action.
-            - Do not claim that any production action was executed.
-            - Human approval is required before rollback or production change.
-            - Clearly separate facts, hypotheses, missing evidence, and
-              recommendations.
-            - Keep the response concise because the current deployment has a
-              limited tokens-per-minute allocation.
+            - Determine whether the request refers to a deployment, release,
+              rollback, version, or recent change.
+
+            - When deployment evidence is relevant, call
+              GetRecentDeployments using the explicitly named service and
+              environment.
+
+            - Use a 24-hour lookback unless the user provides another
+              reasonable period.
+
+            - Cite every deployment claim with the exact evidence ID supplied
+              by the tool, for example [DEP-EV-001].
+
+            - Clearly label deployment records as mock demonstration evidence.
+
+            - Never invent an evidence ID, deployment version, commit ID,
+              pipeline run, timestamp, or change summary.
+
+            - If the tool returns no evidence, state that matching evidence
+              was unavailable. Do not conclude that no deployment occurred.
+
+            - Do not claim access to logs, traces, metrics, databases,
+              source repositories, runbooks, or historical incidents.
+
+            - A deployment close to the reported incident is correlation,
+              not proof of causation.
+
+            - Treat root-cause statements as hypotheses.
+
+            - Recommend collecting additional evidence before any
+              consequential action.
+
+            - Human approval is required before rollback or production
+              changes.
             """;
     }
 
