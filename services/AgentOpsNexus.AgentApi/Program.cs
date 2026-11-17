@@ -1,29 +1,49 @@
 using AgentOpsNexus.AgentApi.Agents;
 using AgentOpsNexus.AgentApi.Configuration;
 using AgentOpsNexus.AgentApi.Data;
+using AgentOpsNexus.AgentApi.Middleware;
+using AgentOpsNexus.AgentApi.Observability;
 using AgentOpsNexus.AgentApi.Repositories;
 using AgentOpsNexus.AgentApi.Services.Deployments;
 using AgentOpsNexus.AgentApi.Tools;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
+const string serviceName =
+    "AgentOpsNexus.AgentApi";
+
+var serviceVersion =
+    typeof(Program)
+        .Assembly
+        .GetName()
+        .Version?
+        .ToString()
+    ??
+    "unknown";
+
+/*
+ * ASP.NET Core infrastructure.
+ */
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 
 /*
- * Validate agent configuration at application startup.
+ * Validate agent configuration during startup.
  *
  * Mock:
- * - Does not require Foundry settings.
+ * - Foundry settings are not required.
  *
  * Foundry:
- * - Requires a valid project endpoint.
- * - Requires a deployed model name.
- * - Requires a Microsoft Entra tenant ID.
+ * - ProjectEndpoint must be a valid absolute URI.
+ * - ModelDeployment must be configured.
+ * - TenantId must be configured.
  */
 builder.Services
     .AddOptions<AgentOptions>()
@@ -71,7 +91,7 @@ builder.Services
     .ValidateOnStart();
 
 /*
- * Return consistent validation errors through
+ * Produce consistent validation failures using
  * ASP.NET Core ProblemDetails.
  */
 builder.Services.Configure<ApiBehaviorOptions>(
@@ -85,12 +105,16 @@ builder.Services.Configure<ApiBehaviorOptions>(
                         context.ModelState)
                     {
                         Status =
-                            StatusCodes.Status400BadRequest,
+                            StatusCodes
+                                .Status400BadRequest,
+
                         Title =
                             "Request validation failed",
+
                         Detail =
                             "One or more request fields " +
                             "are invalid.",
+
                         Type =
                             "https://agentops-nexus/errors/" +
                             "request-validation-failed"
@@ -102,17 +126,17 @@ builder.Services.Configure<ApiBehaviorOptions>(
                 problem.Extensions["retryable"] =
                     false;
 
+                problem.Extensions["correlationId"] =
+                    context.HttpContext
+                        .TraceIdentifier;
+
                 return new BadRequestObjectResult(
                     problem);
             };
     });
 
 /*
- * SQLite persistence configuration.
- *
- * appsettings.json provides the normal local connection
- * string. The fallback protects startup if that section
- * is accidentally missing.
+ * SQLite persistence.
  */
 var connectionString =
     builder.Configuration.GetConnectionString(
@@ -121,36 +145,41 @@ var connectionString =
     "Data Source=App_Data/agentops.db";
 
 /*
- * Ensure the SQLite database directory exists before
- * Entity Framework opens the connection.
+ * Ensure the database directory exists before
+ * SQLite opens the database file.
  */
-var databasePath =
+var databaseDirectory =
     Path.Combine(
         builder.Environment.ContentRootPath,
         "App_Data");
 
-Directory.CreateDirectory(databasePath);
+Directory.CreateDirectory(
+    databaseDirectory);
 
-builder.Services.AddDbContext<AgentOpsDbContext>(
-    options =>
-    {
-        options.UseSqlite(connectionString);
-
-        if (builder.Environment.IsDevelopment())
+builder.Services.AddDbContext<
+    AgentOpsDbContext>(
+        options =>
         {
-            options.EnableDetailedErrors();
-        }
+            options.UseSqlite(
+                connectionString);
 
-        /*
-         * Do not enable sensitive-data logging here.
-         *
-         * Incident prompts and operational information
-         * must not be copied into EF diagnostic logs.
-         */
-    });
+            if (builder.Environment
+                .IsDevelopment())
+            {
+                options.EnableDetailedErrors();
+            }
+
+            /*
+             * Do not enable sensitive-data logging.
+             *
+             * Incident prompts, model responses,
+             * credentials, endpoints, and tenant IDs
+             * must not be written to EF diagnostics.
+             */
+        });
 
 /*
- * DbContext is scoped, so the repository must also
+ * DbContext is scoped, so its repository must also
  * be scoped.
  */
 builder.Services.AddScoped<
@@ -158,7 +187,7 @@ builder.Services.AddScoped<
     EfAgentRequestRepository>();
 
 /*
- * Deterministic read-only deployment evidence provider.
+ * Deterministic read-only deployment evidence.
  */
 builder.Services.AddSingleton<
     IDeploymentEvidenceService,
@@ -167,41 +196,113 @@ builder.Services.AddSingleton<
 /*
  * Agent Framework function-tool container.
  */
-builder.Services.AddSingleton<DeploymentTools>();
+builder.Services.AddSingleton<
+    DeploymentTools>();
 
 /*
- * Register both agent implementations.
+ * Custom metrics service.
  *
- * The configured provider determines which implementation
- * is exposed through IIncidentAgent.
+ * IMeterFactory is supplied by the .NET dependency
+ * injection container.
  */
-builder.Services.AddSingleton<MockIncidentAgent>();
-builder.Services.AddSingleton<FoundryIncidentAgent>();
+builder.Services.AddSingleton<
+    AgentOpsMetrics>();
 
-builder.Services.AddSingleton<IIncidentAgent>(
-    serviceProvider =>
-    {
-        var options =
-            serviceProvider
-                .GetRequiredService<
-                    IOptions<AgentOptions>>()
-                .Value;
+/*
+ * Both agent implementations remain registered.
+ *
+ * AgentOptions.Provider determines which implementation
+ * is exposed as IIncidentAgent.
+ */
+builder.Services.AddSingleton<
+    MockIncidentAgent>();
 
-        if (string.Equals(
-                options.Provider,
-                "Foundry",
-                StringComparison.OrdinalIgnoreCase))
+builder.Services.AddSingleton<
+    FoundryIncidentAgent>();
+
+builder.Services.AddSingleton<
+    IIncidentAgent>(
+        serviceProvider =>
         {
+            var options =
+                serviceProvider
+                    .GetRequiredService<
+                        IOptions<AgentOptions>>()
+                    .Value;
+
+            if (string.Equals(
+                    options.Provider,
+                    "Foundry",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return serviceProvider
+                    .GetRequiredService<
+                        FoundryIncidentAgent>();
+            }
+
             return serviceProvider
                 .GetRequiredService<
-                    FoundryIncidentAgent>();
-        }
+                    MockIncidentAgent>();
+        });
 
-        return serviceProvider
-            .GetRequiredService<
-                MockIncidentAgent>();
-    });
+/*
+ * OpenTelemetry resource, tracing, and metrics.
+ */
+builder.Services
+    .AddOpenTelemetry()
+    .ConfigureResource(
+        resource =>
+            resource.AddService(
+                serviceName: serviceName,
+                serviceVersion:
+                    serviceVersion))
+    .WithTracing(
+        tracing =>
+        {
+            tracing
+                .AddSource(
+                    AgentOpsActivitySource
+                        .SourceName)
+                .AddAspNetCoreInstrumentation(
+                    options =>
+                    {
+                        /*
+                         * Health probes can be excluded from
+                         * distributed traces to reduce noise.
+                         */
+                        options.Filter =
+                            httpContext =>
+                                !httpContext.Request.Path
+                                    .StartsWithSegments(
+                                        "/health");
+                    })
+                .AddHttpClientInstrumentation();
 
+            if (builder.Environment
+                .IsDevelopment())
+            {
+                tracing.AddConsoleExporter();
+            }
+        })
+    .WithMetrics(
+        metrics =>
+        {
+            metrics
+                .AddMeter(
+                    AgentOpsMetrics.MeterName)
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation();
+
+            if (builder.Environment
+                .IsDevelopment())
+            {
+                metrics.AddConsoleExporter();
+            }
+        });
+
+/*
+ * Local React development origin.
+ */
 builder.Services.AddCors(
     options =>
     {
@@ -213,28 +314,46 @@ builder.Services.AddCors(
                     .WithOrigins(
                         "http://localhost:5173")
                     .AllowAnyHeader()
-                    .AllowAnyMethod();
+                    .AllowAnyMethod()
+                    .WithExposedHeaders(
+                        CorrelationIdMiddleware
+                            .HeaderName);
             });
     });
 
 var app = builder.Build();
 
+/*
+ * Central exception handling must run near the
+ * beginning of the pipeline.
+ */
 app.UseExceptionHandler();
+
+/*
+ * Generate or preserve X-Correlation-ID and make it
+ * available to controllers, logs, and traces.
+ */
+app.UseMiddleware<
+    CorrelationIdMiddleware>();
+
+app.UseCors("Frontend");
 
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
 }
 
-app.UseCors("Frontend");
-
 app.MapControllers();
 
+/*
+ * API service summary.
+ */
 app.MapGet(
     "/",
     (
         IOptions<AgentOptions> options,
-        AgentOpsDbContext dbContext) =>
+        AgentOpsDbContext dbContext,
+        HttpContext httpContext) =>
     {
         var usingFoundry =
             string.Equals(
@@ -246,99 +365,134 @@ app.MapGet(
             new
             {
                 service =
-                    "AgentOpsNexus.AgentApi",
+                    serviceName,
+
+                version =
+                    serviceVersion,
+
                 status =
                     "Running",
+
+                correlationId =
+                    httpContext.TraceIdentifier,
+
                 agentProvider =
                     options.Value.Provider,
+
                 modelDeployment =
                     usingFoundry
-                        ? options.Value.ModelDeployment
+                        ? options.Value
+                            .ModelDeployment
                         : null,
+
                 groundedDeploymentTool =
                     usingFoundry,
+
                 deploymentEvidenceProvider =
                     "MockDeploymentEvidenceService",
+
                 persistenceProvider =
-                    dbContext.Database.ProviderName,
+                    dbContext.Database
+                        .ProviderName,
+
+                telemetry =
+                    "OpenTelemetry",
+
                 frontend =
                     "http://localhost:5173",
+
                 health =
                     "/health",
+
                 requestsApi =
                     "/api/v1/requests"
             });
     });
 
+/*
+ * Health check including database connectivity.
+ */
 app.MapGet(
     "/health",
     async (
         IOptions<AgentOptions> options,
         AgentOpsDbContext dbContext,
+        HttpContext httpContext,
         CancellationToken cancellationToken) =>
     {
         var databaseAvailable =
             await dbContext.Database
-                .CanConnectAsync(cancellationToken);
+                .CanConnectAsync(
+                    cancellationToken);
 
         var status =
             databaseAvailable
                 ? "Healthy"
                 : "Degraded";
 
-        return databaseAvailable
-            ? Results.Ok(
-                new
-                {
-                    status,
-                    service =
-                        "AgentOpsNexus.AgentApi",
-                    agentProvider =
-                        options.Value.Provider,
-                    deploymentTool =
-                        "GetRecentDeployments",
-                    persistence =
-                        "SQLite",
-                    databaseAvailable,
-                    timestamp =
-                        DateTimeOffset.UtcNow
-                })
-            : Results.Json(
-                new
-                {
-                    status,
-                    service =
-                        "AgentOpsNexus.AgentApi",
-                    agentProvider =
-                        options.Value.Provider,
-                    persistence =
-                        "SQLite",
-                    databaseAvailable,
-                    timestamp =
-                        DateTimeOffset.UtcNow
-                },
-                statusCode:
-                    StatusCodes
-                        .Status503ServiceUnavailable);
+        var response =
+            new
+            {
+                status,
+
+                service =
+                    serviceName,
+
+                version =
+                    serviceVersion,
+
+                correlationId =
+                    httpContext.TraceIdentifier,
+
+                agentProvider =
+                    options.Value.Provider,
+
+                deploymentTool =
+                    "GetRecentDeployments",
+
+                persistence =
+                    "SQLite",
+
+                databaseAvailable,
+
+                telemetry =
+                    "OpenTelemetry",
+
+                timestamp =
+                    DateTimeOffset.UtcNow
+            };
+
+        if (databaseAvailable)
+        {
+            return Results.Ok(response);
+        }
+
+        return Results.Json(
+            response,
+            statusCode:
+                StatusCodes
+                    .Status503ServiceUnavailable);
     });
 
 /*
- * Apply checked-in EF Core migrations during startup.
+ * Apply checked-in migrations at startup.
  *
  * This is convenient for local development and the
- * capstone demonstration. In a production deployment,
- * run migrations as a controlled deployment step rather
- * than from every application instance.
+ * capstone demonstration. For production, run database
+ * migrations as a controlled deployment operation
+ * before starting application instances.
  */
-using (var scope =
+using (var migrationScope =
        app.Services.CreateScope())
 {
     var dbContext =
-        scope.ServiceProvider
+        migrationScope
+            .ServiceProvider
             .GetRequiredService<
                 AgentOpsDbContext>();
 
-    await dbContext.Database.MigrateAsync();
+    await dbContext.Database
+        .MigrateAsync();
 }
 
 app.Run();
