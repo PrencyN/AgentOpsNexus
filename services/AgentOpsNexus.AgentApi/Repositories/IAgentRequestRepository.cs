@@ -4,9 +4,18 @@ namespace AgentOpsNexus.AgentApi.Repositories;
 
 public interface IAgentRequestRepository
 {
-    AgentRequestRecord Add(AgentRequestRecord request);
+    Task<AgentRequestRecord> AddAsync(
+        AgentRequestRecord request,
+        CancellationToken cancellationToken);
 
-    AgentRequestRecord? Get(Guid requestId);
+    Task<AgentRequestRecord?> GetAsync(
+        Guid requestId,
+        CancellationToken cancellationToken);
 
-    IReadOnlyCollection<AgentRequestRecord> GetAll();
+    Task<IReadOnlyCollection<AgentRequestRecord>>
+        GetAllAsync(
+            CancellationToken cancellationToken);
+
+    Task SaveChangesAsync(
+        CancellationToken cancellationToken);
 }
