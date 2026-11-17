@@ -3,30 +3,67 @@ using AgentOpsNexus.AgentApi.Domain;
 
 namespace AgentOpsNexus.AgentApi.Repositories;
 
-public sealed class InMemoryAgentRequestRepository : IAgentRequestRepository
+public sealed class InMemoryAgentRequestRepository
+    : IAgentRequestRepository
 {
-    private readonly ConcurrentDictionary<Guid, AgentRequestRecord> _requests = new();
+    private readonly ConcurrentDictionary<
+        Guid,
+        AgentRequestRecord> _requests = new();
 
-    public AgentRequestRecord Add(AgentRequestRecord request)
+    public Task<AgentRequestRecord> AddAsync(
+        AgentRequestRecord request,
+        CancellationToken cancellationToken)
     {
-        if (!_requests.TryAdd(request.Id, request))
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_requests.TryAdd(
+                request.Id,
+                request))
         {
             throw new InvalidOperationException(
                 $"Request {request.Id} already exists.");
         }
 
-        return request;
+        return Task.FromResult(request);
     }
 
-    public AgentRequestRecord? Get(Guid requestId)
+    public Task<AgentRequestRecord?> GetAsync(
+        Guid requestId,
+        CancellationToken cancellationToken)
     {
-        return _requests.GetValueOrDefault(requestId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _requests.TryGetValue(
+            requestId,
+            out var request);
+
+        return Task.FromResult(request);
     }
 
-    public IReadOnlyCollection<AgentRequestRecord> GetAll()
+    public Task<IReadOnlyCollection<AgentRequestRecord>>
+        GetAllAsync(
+            CancellationToken cancellationToken)
     {
-        return _requests.Values
-            .OrderByDescending(item => item.CreatedAt)
-            .ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyCollection<AgentRequestRecord> result =
+            _requests.Values
+                .OrderByDescending(
+                    item => item.CreatedAt)
+                .ToArray();
+
+        return Task.FromResult(result);
+    }
+
+    public Task SaveChangesAsync(
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        /*
+         * Objects are stored by reference, so domain mutations
+         * are already reflected in memory.
+         */
+        return Task.CompletedTask;
     }
 }

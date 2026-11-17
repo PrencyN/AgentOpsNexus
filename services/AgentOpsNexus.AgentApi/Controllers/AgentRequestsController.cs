@@ -9,14 +9,20 @@ namespace AgentOpsNexus.AgentApi.Controllers;
 
 [ApiController]
 [Route("api/v1/requests")]
-public sealed class AgentRequestsController : ControllerBase
+public sealed class AgentRequestsController
+    : ControllerBase
 {
-    private static readonly JsonSerializerOptions JsonOptions =
-        new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions
+        JsonOptions =
+            new(JsonSerializerDefaults.Web);
 
-    private readonly IAgentRequestRepository _repository;
+    private readonly IAgentRequestRepository
+        _repository;
+
     private readonly IIncidentAgent _agent;
-    private readonly ILogger<AgentRequestsController> _logger;
+
+    private readonly ILogger<AgentRequestsController>
+        _logger;
 
     public AgentRequestsController(
         IAgentRequestRepository repository,
@@ -29,122 +35,210 @@ public sealed class AgentRequestsController : ControllerBase
     }
 
     [HttpPost]
-    [ProducesResponseType<RequestAcceptedResponse>(StatusCodes.Status202Accepted)]
-    [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest)]
-    public ActionResult<RequestAcceptedResponse> Create(
-        [FromBody] CreateAgentRequest request)
+    [ProducesResponseType<RequestAcceptedResponse>(
+        StatusCodes.Status202Accepted)]
+    [ProducesResponseType<ValidationProblemDetails>(
+        StatusCodes.Status400BadRequest)]
+    public async Task<
+        ActionResult<RequestAcceptedResponse>>
+        Create(
+            [FromBody] CreateAgentRequest request,
+            CancellationToken cancellationToken)
     {
-        var normalizedMessage = request.Message.Trim();
+        var normalizedMessage =
+            request.Message.Trim();
 
         if (normalizedMessage.Length < 10)
         {
             ModelState.AddModelError(
                 nameof(request.Message),
-                "Message must contain at least 10 non-whitespace characters.");
+                "Message must contain at least 10 " +
+                "non-whitespace characters.");
 
             return ValidationProblem(ModelState);
         }
 
-        var record = new AgentRequestRecord
-        {
-            Id = Guid.NewGuid(),
-            Message = normalizedMessage,
-            Environment = request.Environment,
-            Severity = request.Severity,
-            SimulateFailure = request.SimulateFailure,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        var correlationId =
+            HttpContext.Response.Headers[
+                "X-Correlation-ID"]
+                .FirstOrDefault()
+            ??
+            HttpContext.TraceIdentifier;
 
-        _repository.Add(record);
+        var record =
+            new AgentRequestRecord(
+                id: Guid.NewGuid(),
+                message: normalizedMessage,
+                environment: request.Environment,
+                severity: request.Severity,
+                simulateFailure:
+                    request.SimulateFailure,
+                createdAt:
+                    DateTimeOffset.UtcNow,
+                correlationId:
+                    correlationId);
 
-        var response = new RequestAcceptedResponse(
-            record.Id,
-            record.Status.ToString(),
-            record.CreatedAt,
+        await _repository.AddAsync(
+            record,
+            cancellationToken);
+
+        var streamUrl =
             Url.ActionLink(
                 nameof(Stream),
-                values: new { requestId = record.Id })
-            ?? $"/api/v1/requests/{record.Id}/stream");
+                values:
+                    new
+                    {
+                        requestId = record.Id
+                    })
+            ??
+            $"/api/v1/requests/" +
+            $"{record.Id}/stream";
 
-        return Accepted(response.StreamUrl, response);
+        var response =
+            new RequestAcceptedResponse(
+                record.Id,
+                record.Status.ToString(),
+                record.CreatedAt,
+                streamUrl);
+
+        return Accepted(
+            streamUrl,
+            response);
     }
 
     [HttpGet]
-    [ProducesResponseType<IReadOnlyCollection<RequestDetailsResponse>>(
-        StatusCodes.Status200OK)]
-    public ActionResult<IReadOnlyCollection<RequestDetailsResponse>> GetAll()
+    [ProducesResponseType<
+        IReadOnlyCollection<RequestDetailsResponse>>(
+            StatusCodes.Status200OK)]
+    public async Task<
+        ActionResult<
+            IReadOnlyCollection<
+                RequestDetailsResponse>>>
+        GetAll(
+            CancellationToken cancellationToken)
     {
-        var response = _repository
-            .GetAll()
-            .Select(MapResponse)
-            .ToArray();
+        var requests =
+            await _repository.GetAllAsync(
+                cancellationToken);
+
+        var response =
+            requests
+                .Select(MapResponse)
+                .ToArray();
 
         return Ok(response);
     }
 
     [HttpGet("{requestId:guid}")]
-    [ProducesResponseType<RequestDetailsResponse>(StatusCodes.Status200OK)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    public ActionResult<RequestDetailsResponse> GetById(Guid requestId)
+    [ProducesResponseType<RequestDetailsResponse>(
+        StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status404NotFound)]
+    public async Task<
+        ActionResult<RequestDetailsResponse>>
+        GetById(
+            Guid requestId,
+            CancellationToken cancellationToken)
     {
-        var request = _repository.Get(requestId);
+        var request =
+            await _repository.GetAsync(
+                requestId,
+                cancellationToken);
 
         if (request is null)
         {
-            return NotFound(CreateProblem(
-                StatusCodes.Status404NotFound,
-                "REQUEST_NOT_FOUND",
-                "Request not found",
-                $"No request exists with ID {requestId}."));
+            return NotFound(
+                CreateProblem(
+                    StatusCodes.Status404NotFound,
+                    "REQUEST_NOT_FOUND",
+                    "Request not found",
+                    $"No request exists with ID " +
+                    $"{requestId}."));
         }
 
         return Ok(MapResponse(request));
     }
 
     [HttpPost("{requestId:guid}/retry")]
-    [ProducesResponseType<RequestAcceptedResponse>(StatusCodes.Status202Accepted)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
-    public ActionResult<RequestAcceptedResponse> Retry(Guid requestId)
+    [ProducesResponseType<RequestAcceptedResponse>(
+        StatusCodes.Status202Accepted)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status404NotFound)]
+    public async Task<
+        ActionResult<RequestAcceptedResponse>>
+        Retry(
+            Guid requestId,
+            CancellationToken cancellationToken)
     {
-        var original = _repository.Get(requestId);
+        var original =
+            await _repository.GetAsync(
+                requestId,
+                cancellationToken);
 
         if (original is null)
         {
-            return NotFound(CreateProblem(
-                StatusCodes.Status404NotFound,
-                "REQUEST_NOT_FOUND",
-                "Request not found",
-                $"No request exists with ID {requestId}."));
+            return NotFound(
+                CreateProblem(
+                    StatusCodes.Status404NotFound,
+                    "REQUEST_NOT_FOUND",
+                    "Request not found",
+                    $"No request exists with ID " +
+                    $"{requestId}."));
         }
 
         if (!original.Retryable)
         {
-            return BadRequest(CreateProblem(
-                StatusCodes.Status400BadRequest,
-                "REQUEST_NOT_RETRYABLE",
-                "Request cannot be retried",
-                "Only failed or cancelled retryable requests can be retried."));
+            return BadRequest(
+                CreateProblem(
+                    StatusCodes.Status400BadRequest,
+                    "REQUEST_NOT_RETRYABLE",
+                    "Request cannot be retried",
+                    "Only failed or cancelled " +
+                    "retryable requests can be retried."));
         }
 
-        var retry = new AgentRequestRecord
-        {
-            Id = Guid.NewGuid(),
-            Message = original.Message,
-            Environment = original.Environment,
-            Severity = original.Severity,
-            SimulateFailure = false,
-            AttemptNumber = original.AttemptNumber + 1,
-            RetriedFromRequestId = original.Id,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        var correlationId =
+            HttpContext.Response.Headers[
+                "X-Correlation-ID"]
+                .FirstOrDefault()
+            ??
+            HttpContext.TraceIdentifier;
 
-        _repository.Add(retry);
+        var retry =
+            new AgentRequestRecord(
+                id: Guid.NewGuid(),
+                message: original.Message,
+                environment:
+                    original.Environment,
+                severity:
+                    original.Severity,
+                simulateFailure: false,
+                attemptNumber:
+                    original.AttemptNumber + 1,
+                retriedFromRequestId:
+                    original.Id,
+                createdAt:
+                    DateTimeOffset.UtcNow,
+                correlationId:
+                    correlationId);
 
-        var streamUrl = Url.ActionLink(
-            nameof(Stream),
-            values: new { requestId = retry.Id })
-            ?? $"/api/v1/requests/{retry.Id}/stream";
+        await _repository.AddAsync(
+            retry,
+            cancellationToken);
+
+        var streamUrl =
+            Url.ActionLink(
+                nameof(Stream),
+                values:
+                    new
+                    {
+                        requestId = retry.Id
+                    })
+            ??
+            $"/api/v1/requests/" +
+            $"{retry.Id}/stream";
 
         return Accepted(
             streamUrl,
@@ -160,82 +254,129 @@ public sealed class AgentRequestsController : ControllerBase
         Guid requestId,
         CancellationToken cancellationToken)
     {
-        var request = _repository.Get(requestId);
+        var request =
+            await _repository.GetAsync(
+                requestId,
+                cancellationToken);
 
         if (request is null)
         {
-            Response.StatusCode = StatusCodes.Status404NotFound;
+            Response.StatusCode =
+                StatusCodes.Status404NotFound;
+
             await Response.WriteAsJsonAsync(
                 CreateProblem(
                     StatusCodes.Status404NotFound,
                     "REQUEST_NOT_FOUND",
                     "Request not found",
-                    $"No request exists with ID {requestId}."),
+                    $"No request exists with ID " +
+                    $"{requestId}."),
                 cancellationToken);
 
             return;
         }
 
-        if (request.Status == AgentRequestStatus.Completed)
+        if (request.Status ==
+            AgentRequestStatus.Completed)
         {
-            Response.StatusCode = StatusCodes.Status409Conflict;
+            Response.StatusCode =
+                StatusCodes.Status409Conflict;
+
             await Response.WriteAsJsonAsync(
                 CreateProblem(
                     StatusCodes.Status409Conflict,
                     "REQUEST_ALREADY_COMPLETED",
                     "Request already completed",
-                    "A completed request cannot be streamed again."),
+                    "A completed request cannot " +
+                    "be streamed again."),
                 cancellationToken);
 
             return;
         }
 
-        Response.StatusCode = StatusCodes.Status200OK;
-        Response.ContentType = "text/event-stream";
-        Response.Headers.CacheControl = "no-cache";
-        Response.Headers.Connection = "keep-alive";
-        Response.Headers["X-Accel-Buffering"] = "no";
+        Response.StatusCode =
+            StatusCodes.Status200OK;
+
+        Response.ContentType =
+            "text/event-stream";
+
+        Response.Headers.CacheControl =
+            "no-cache";
+
+        Response.Headers.Connection =
+            "keep-alive";
+
+        Response.Headers["X-Accel-Buffering"] =
+            "no";
 
         request.MarkProcessing();
 
+        await _repository.SaveChangesAsync(
+            cancellationToken);
+
         try
         {
-            await foreach (var update in _agent.InvestigateAsync(
-                               request,
-                               cancellationToken))
+            await foreach (
+                var update in
+                    _agent.InvestigateAsync(
+                        request,
+                        cancellationToken))
             {
-                if (update.Type == "agent.message.delta")
+                if (update.Type ==
+                    "agent.message.delta")
                 {
-                    request.AppendResponse(update.Message);
+                    request.AppendResponse(
+                        update.Message);
                 }
 
-                await WriteEventAsync(update, cancellationToken);
+                await WriteEventAsync(
+                    update,
+                    cancellationToken);
             }
 
             request.MarkCompleted();
+
+            await _repository.SaveChangesAsync(
+                CancellationToken.None);
         }
         catch (OperationCanceledException)
-            when (cancellationToken.IsCancellationRequested)
+            when (
+                cancellationToken
+                    .IsCancellationRequested)
         {
             request.MarkCancelled();
 
+            await SaveWithoutCancellationAsync();
+
             _logger.LogInformation(
-                "Agent request {RequestId} was cancelled.",
-                request.Id);
+                "Agent request {RequestId} " +
+                "was cancelled. Correlation ID: " +
+                "{CorrelationId}.",
+                request.Id,
+                request.CorrelationId);
         }
         catch (Exception exception)
         {
-            request.MarkFailed("AGENT_SERVICE_UNAVAILABLE", retryable: true);
+            request.MarkFailed(
+                "AGENT_SERVICE_UNAVAILABLE",
+                retryable: true);
+
+            await SaveWithoutCancellationAsync();
 
             _logger.LogError(
                 exception,
-                "Agent request {RequestId} failed.",
-                request.Id);
+                "Agent request {RequestId} failed. " +
+                "Correlation ID: {CorrelationId}.",
+                request.Id,
+                request.CorrelationId);
 
-            var failureEvent = new AgentStreamEvent(
-                "agent.failed",
-                "The AI service is temporarily unavailable. You can retry this request.",
-                DateTimeOffset.UtcNow);
+            var failureEvent =
+                new AgentStreamEvent(
+                    "agent.failed",
+                    "The AI service is temporarily " +
+                    "unavailable. You can retry this " +
+                    "request.",
+                    DateTimeOffset.UtcNow);
 
             await WriteEventAsync(
                 failureEvent,
@@ -243,11 +384,29 @@ public sealed class AgentRequestsController : ControllerBase
         }
     }
 
+    private async Task SaveWithoutCancellationAsync()
+    {
+        try
+        {
+            await _repository.SaveChangesAsync(
+                CancellationToken.None);
+        }
+        catch (Exception persistenceException)
+        {
+            _logger.LogError(
+                persistenceException,
+                "Failed to persist final request state.");
+        }
+    }
+
     private async Task WriteEventAsync(
         AgentStreamEvent update,
         CancellationToken cancellationToken)
     {
-        var json = JsonSerializer.Serialize(update, JsonOptions);
+        var json =
+            JsonSerializer.Serialize(
+                update,
+                JsonOptions);
 
         await Response.WriteAsync(
             $"event: {update.Type}\n",
@@ -257,11 +416,13 @@ public sealed class AgentRequestsController : ControllerBase
             $"data: {json}\n\n",
             cancellationToken);
 
-        await Response.Body.FlushAsync(cancellationToken);
+        await Response.Body.FlushAsync(
+            cancellationToken);
     }
 
-    private static RequestDetailsResponse MapResponse(
-        AgentRequestRecord request)
+    private static RequestDetailsResponse
+        MapResponse(
+            AgentRequestRecord request)
     {
         return new RequestDetailsResponse(
             request.Id,
@@ -269,7 +430,8 @@ public sealed class AgentRequestsController : ControllerBase
             request.Environment,
             request.Severity,
             request.Status.ToString(),
-            string.IsNullOrWhiteSpace(request.Response)
+            string.IsNullOrWhiteSpace(
+                request.Response)
                 ? null
                 : request.Response,
             request.ErrorCode,
@@ -286,16 +448,22 @@ public sealed class AgentRequestsController : ControllerBase
         string title,
         string detail)
     {
-        var problem = new ProblemDetails
-        {
-            Status = status,
-            Title = title,
-            Detail = detail,
-            Type = $"https://agentops-nexus/errors/{code.ToLowerInvariant()}"
-        };
+        var problem =
+            new ProblemDetails
+            {
+                Status = status,
+                Title = title,
+                Detail = detail,
+                Type =
+                    "https://agentops-nexus/errors/" +
+                    code.ToLowerInvariant()
+            };
 
-        problem.Extensions["code"] = code;
-        problem.Extensions["retryable"] = status >= 500;
+        problem.Extensions["code"] =
+            code;
+
+        problem.Extensions["retryable"] =
+            status >= 500;
 
         return problem;
     }
