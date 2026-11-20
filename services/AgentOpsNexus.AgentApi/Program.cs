@@ -1,12 +1,16 @@
+using System.Threading.RateLimiting;
 using AgentOpsNexus.AgentApi.Agents;
 using AgentOpsNexus.AgentApi.Configuration;
 using AgentOpsNexus.AgentApi.Data;
+using AgentOpsNexus.AgentApi.Evaluation;
 using AgentOpsNexus.AgentApi.Middleware;
 using AgentOpsNexus.AgentApi.Observability;
 using AgentOpsNexus.AgentApi.Repositories;
+using AgentOpsNexus.AgentApi.Security;
 using AgentOpsNexus.AgentApi.Services.Deployments;
 using AgentOpsNexus.AgentApi.Tools;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
@@ -28,22 +32,14 @@ var serviceVersion =
     "unknown";
 
 /*
- * ASP.NET Core infrastructure.
+ * ASP.NET Core foundation.
  */
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 
 /*
- * Validate agent configuration during startup.
- *
- * Mock:
- * - Foundry settings are not required.
- *
- * Foundry:
- * - ProjectEndpoint must be a valid absolute URI.
- * - ModelDeployment must be configured.
- * - TenantId must be configured.
+ * Agent configuration validation.
  */
 builder.Services
     .AddOptions<AgentOptions>()
@@ -91,8 +87,7 @@ builder.Services
     .ValidateOnStart();
 
 /*
- * Produce consistent validation failures using
- * ASP.NET Core ProblemDetails.
+ * Consistent validation errors.
  */
 builder.Services.Configure<ApiBehaviorOptions>(
     options =>
@@ -144,10 +139,6 @@ var connectionString =
     ??
     "Data Source=App_Data/agentops.db";
 
-/*
- * Ensure the database directory exists before
- * SQLite opens the database file.
- */
 var databaseDirectory =
     Path.Combine(
         builder.Environment.ContentRootPath,
@@ -170,49 +161,44 @@ builder.Services.AddDbContext<
             }
 
             /*
-             * Do not enable sensitive-data logging.
-             *
-             * Incident prompts, model responses,
-             * credentials, endpoints, and tenant IDs
-             * must not be written to EF diagnostics.
+             * Sensitive-data logging is deliberately
+             * disabled. Prompts, responses, secrets,
+             * endpoints, and tenant IDs must not appear
+             * in EF diagnostic logs.
              */
         });
 
-/*
- * DbContext is scoped, so its repository must also
- * be scoped.
- */
 builder.Services.AddScoped<
     IAgentRequestRepository,
     EfAgentRequestRepository>();
 
 /*
- * Deterministic read-only deployment evidence.
+ * Security and deterministic evaluation services.
+ */
+builder.Services.AddSingleton<
+    IncidentInputPolicy>();
+
+builder.Services.AddSingleton<
+    IncidentResponseEvaluator>();
+
+/*
+ * Grounded deployment evidence.
  */
 builder.Services.AddSingleton<
     IDeploymentEvidenceService,
     MockDeploymentEvidenceService>();
 
-/*
- * Agent Framework function-tool container.
- */
 builder.Services.AddSingleton<
     DeploymentTools>();
 
 /*
- * Custom metrics service.
- *
- * IMeterFactory is supplied by the .NET dependency
- * injection container.
+ * OpenTelemetry custom metrics.
  */
 builder.Services.AddSingleton<
     AgentOpsMetrics>();
 
 /*
- * Both agent implementations remain registered.
- *
- * AgentOptions.Provider determines which implementation
- * is exposed as IIncidentAgent.
+ * Agent implementations.
  */
 builder.Services.AddSingleton<
     MockIncidentAgent>();
@@ -246,7 +232,7 @@ builder.Services.AddSingleton<
         });
 
 /*
- * OpenTelemetry resource, tracing, and metrics.
+ * OpenTelemetry tracing and metrics.
  */
 builder.Services
     .AddOpenTelemetry()
@@ -254,8 +240,7 @@ builder.Services
         resource =>
             resource.AddService(
                 serviceName: serviceName,
-                serviceVersion:
-                    serviceVersion))
+                serviceVersion: serviceVersion))
     .WithTracing(
         tracing =>
         {
@@ -267,8 +252,9 @@ builder.Services
                     options =>
                     {
                         /*
-                         * Health probes can be excluded from
-                         * distributed traces to reduce noise.
+                         * Health probes are excluded from
+                         * traces to reduce observability
+                         * noise.
                          */
                         options.Filter =
                             httpContext =>
@@ -301,7 +287,135 @@ builder.Services
         });
 
 /*
- * Local React development origin.
+ * Rate limiting.
+ *
+ * Create policy:
+ * - 20 accepted request creations per minute per client.
+ *
+ * Stream policy:
+ * - Maximum 5 concurrent stream requests per client.
+ */
+builder.Services.AddRateLimiter(
+    options =>
+    {
+        options.RejectionStatusCode =
+            StatusCodes
+                .Status429TooManyRequests;
+
+        options.AddPolicy(
+            "investigation-create",
+            httpContext =>
+            {
+                var partitionKey =
+                    GetClientPartitionKey(
+                        httpContext);
+
+                return RateLimitPartition
+                    .GetFixedWindowLimiter(
+                        partitionKey,
+                        _ =>
+                            new FixedWindowRateLimiterOptions
+                            {
+                                PermitLimit = 20,
+
+                                Window =
+                                    TimeSpan
+                                        .FromMinutes(1),
+
+                                QueueLimit = 0,
+
+                                AutoReplenishment =
+                                    true
+                            });
+            });
+
+        options.AddPolicy(
+            "investigation-stream",
+            httpContext =>
+            {
+                var partitionKey =
+                    GetClientPartitionKey(
+                        httpContext);
+
+                return RateLimitPartition
+                    .GetConcurrencyLimiter(
+                        partitionKey,
+                        _ =>
+                            new ConcurrencyLimiterOptions
+                            {
+                                PermitLimit = 5,
+
+                                QueueLimit = 0
+                            });
+            });
+
+        options.OnRejected =
+            async (
+                context,
+                cancellationToken) =>
+            {
+                var response =
+                    context.HttpContext.Response;
+
+                response.StatusCode =
+                    StatusCodes
+                        .Status429TooManyRequests;
+
+                response.ContentType =
+                    "application/problem+json";
+
+                if (context.Lease.TryGetMetadata(
+                        MetadataName.RetryAfter,
+                        out var retryAfter))
+                {
+                    response.Headers.RetryAfter =
+                        Math.Max(
+                            1,
+                            (int)Math.Ceiling(
+                                retryAfter
+                                    .TotalSeconds))
+                        .ToString();
+                }
+
+                var problem =
+                    new ProblemDetails
+                    {
+                        Status =
+                            StatusCodes
+                                .Status429TooManyRequests,
+
+                        Title =
+                            "Request rate limit exceeded",
+
+                        Detail =
+                            "Too many investigation requests " +
+                            "are active or were submitted in " +
+                            "the current time window. Retry " +
+                            "after the limit resets.",
+
+                        Type =
+                            "https://agentops-nexus/errors/" +
+                            "rate-limit-exceeded"
+                    };
+
+                problem.Extensions["code"] =
+                    "RATE_LIMIT_EXCEEDED";
+
+                problem.Extensions["retryable"] =
+                    true;
+
+                problem.Extensions["correlationId"] =
+                    context.HttpContext
+                        .TraceIdentifier;
+
+                await response.WriteAsJsonAsync(
+                    problem,
+                    cancellationToken);
+            };
+    });
+
+/*
+ * React development origin.
  */
 builder.Services.AddCors(
     options =>
@@ -317,26 +431,30 @@ builder.Services.AddCors(
                     .AllowAnyMethod()
                     .WithExposedHeaders(
                         CorrelationIdMiddleware
-                            .HeaderName);
+                            .HeaderName,
+                        "Retry-After");
             });
     });
 
 var app = builder.Build();
 
 /*
- * Central exception handling must run near the
- * beginning of the pipeline.
+ * Middleware pipeline.
+ *
+ * Correlation ID runs before security, rate limiting,
+ * endpoint logic, and exception handling responses.
  */
 app.UseExceptionHandler();
 
-/*
- * Generate or preserve X-Correlation-ID and make it
- * available to controllers, logs, and traces.
- */
 app.UseMiddleware<
     CorrelationIdMiddleware>();
 
+app.UseMiddleware<
+    SecurityHeadersMiddleware>();
+
 app.UseCors("Frontend");
+
+app.UseRateLimiter();
 
 if (app.Environment.IsDevelopment())
 {
@@ -346,7 +464,7 @@ if (app.Environment.IsDevelopment())
 app.MapControllers();
 
 /*
- * API service summary.
+ * API summary.
  */
 app.MapGet(
     "/",
@@ -398,6 +516,19 @@ app.MapGet(
                 telemetry =
                     "OpenTelemetry",
 
+                security =
+                    new
+                    {
+                        inputPolicy =
+                            "enabled",
+
+                        securityHeaders =
+                            "enabled",
+
+                        rateLimiting =
+                            "enabled"
+                    },
+
                 frontend =
                     "http://localhost:5173",
 
@@ -410,7 +541,7 @@ app.MapGet(
     });
 
 /*
- * Health check including database connectivity.
+ * Health endpoint is intentionally not rate-limited.
  */
 app.MapGet(
     "/health",
@@ -458,6 +589,9 @@ app.MapGet(
                 telemetry =
                     "OpenTelemetry",
 
+                security =
+                    "Enabled",
+
                 timestamp =
                     DateTimeOffset.UtcNow
             };
@@ -475,12 +609,11 @@ app.MapGet(
     });
 
 /*
- * Apply checked-in migrations at startup.
+ * Apply checked-in EF Core migrations.
  *
- * This is convenient for local development and the
- * capstone demonstration. For production, run database
- * migrations as a controlled deployment operation
- * before starting application instances.
+ * Production deployments should run migrations as a
+ * controlled deployment step rather than from every
+ * application process.
  */
 using (var migrationScope =
        app.Services.CreateScope())
@@ -497,4 +630,44 @@ using (var migrationScope =
 
 app.Run();
 
+static string GetClientPartitionKey(
+    HttpContext httpContext)
+{
+    /*
+     * Prefer the authenticated identity when available.
+     */
+    var userName =
+        httpContext.User.Identity?.Name;
+
+    if (!string.IsNullOrWhiteSpace(userName))
+    {
+        return $"user:{userName}";
+    }
+
+    /*
+     * For local development, this normally resolves to
+     * the loopback address.
+     *
+     * In production behind a trusted reverse proxy,
+     * configure ForwardedHeaders before relying on the
+     * remote IP address.
+     */
+    var remoteAddress =
+        httpContext.Connection
+            .RemoteIpAddress?
+            .ToString();
+
+    if (!string.IsNullOrWhiteSpace(
+            remoteAddress))
+    {
+        return $"ip:{remoteAddress}";
+    }
+
+    return "client:unknown";
+}
+
+/*
+ * Keep this declaration at the absolute end of the file.
+ * It enables WebApplicationFactory-based integration tests.
+ */
 public partial class Program;

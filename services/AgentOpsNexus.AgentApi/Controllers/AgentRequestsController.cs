@@ -3,7 +3,9 @@ using AgentOpsNexus.AgentApi.Agents;
 using AgentOpsNexus.AgentApi.Contracts;
 using AgentOpsNexus.AgentApi.Domain;
 using AgentOpsNexus.AgentApi.Repositories;
+using AgentOpsNexus.AgentApi.Security;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace AgentOpsNexus.AgentApi.Controllers;
 
@@ -19,58 +21,87 @@ public sealed class AgentRequestsController
     private readonly IAgentRequestRepository
         _repository;
 
-    private readonly IIncidentAgent _agent;
+    private readonly IIncidentAgent
+        _agent;
 
-    private readonly ILogger<AgentRequestsController>
+    private readonly IncidentInputPolicy
+        _inputPolicy;
+
+    private readonly ILogger<
+        AgentRequestsController>
         _logger;
 
     public AgentRequestsController(
         IAgentRequestRepository repository,
         IIncidentAgent agent,
+        IncidentInputPolicy inputPolicy,
         ILogger<AgentRequestsController> logger)
     {
         _repository = repository;
         _agent = agent;
+        _inputPolicy = inputPolicy;
         _logger = logger;
     }
 
     [HttpPost]
-    [ProducesResponseType<RequestAcceptedResponse>(
-        StatusCodes.Status202Accepted)]
-    [ProducesResponseType<ValidationProblemDetails>(
-        StatusCodes.Status400BadRequest)]
+    [EnableRateLimiting(
+        "investigation-create")]
+    [ProducesResponseType<
+        RequestAcceptedResponse>(
+            StatusCodes.Status202Accepted)]
+    [ProducesResponseType<
+        ValidationProblemDetails>(
+            StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status429TooManyRequests)]
     public async Task<
         ActionResult<RequestAcceptedResponse>>
         Create(
-            [FromBody] CreateAgentRequest request,
+            [FromBody]
+            CreateAgentRequest request,
             CancellationToken cancellationToken)
     {
-        var normalizedMessage =
-            request.Message.Trim();
+        var policyResult =
+            _inputPolicy.Evaluate(
+                request.Message);
 
-        if (normalizedMessage.Length < 10)
+        if (!policyResult.IsAccepted)
         {
-            ModelState.AddModelError(
-                nameof(request.Message),
-                "Message must contain at least 10 " +
-                "non-whitespace characters.");
+            var problem =
+                CreateProblem(
+                    status:
+                        StatusCodes
+                            .Status400BadRequest,
+                    code:
+                        policyResult.ErrorCode
+                        ??
+                        "INVALID_INCIDENT_DESCRIPTION",
+                    title:
+                        "Incident description rejected",
+                    detail:
+                        policyResult.ErrorMessage
+                        ??
+                        "The incident description " +
+                        "is invalid.",
+                    retryable:
+                        false);
 
-            return ValidationProblem(ModelState);
+            return BadRequest(problem);
         }
 
         var correlationId =
-            HttpContext.Response.Headers[
-                "X-Correlation-ID"]
-                .FirstOrDefault()
-            ??
             HttpContext.TraceIdentifier;
 
         var record =
             new AgentRequestRecord(
-                id: Guid.NewGuid(),
-                message: normalizedMessage,
-                environment: request.Environment,
-                severity: request.Severity,
+                id:
+                    Guid.NewGuid(),
+                message:
+                    policyResult.NormalizedInput!,
+                environment:
+                    request.Environment,
+                severity:
+                    request.Severity,
                 simulateFailure:
                     request.SimulateFailure,
                 createdAt:
@@ -88,7 +119,8 @@ public sealed class AgentRequestsController
                 values:
                     new
                     {
-                        requestId = record.Id
+                        requestId =
+                            record.Id
                     })
             ??
             $"/api/v1/requests/" +
@@ -108,8 +140,9 @@ public sealed class AgentRequestsController
 
     [HttpGet]
     [ProducesResponseType<
-        IReadOnlyCollection<RequestDetailsResponse>>(
-            StatusCodes.Status200OK)]
+        IReadOnlyCollection<
+            RequestDetailsResponse>>(
+                StatusCodes.Status200OK)]
     public async Task<
         ActionResult<
             IReadOnlyCollection<
@@ -130,8 +163,9 @@ public sealed class AgentRequestsController
     }
 
     [HttpGet("{requestId:guid}")]
-    [ProducesResponseType<RequestDetailsResponse>(
-        StatusCodes.Status200OK)]
+    [ProducesResponseType<
+        RequestDetailsResponse>(
+            StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status404NotFound)]
     public async Task<
@@ -149,23 +183,36 @@ public sealed class AgentRequestsController
         {
             return NotFound(
                 CreateProblem(
-                    StatusCodes.Status404NotFound,
-                    "REQUEST_NOT_FOUND",
-                    "Request not found",
-                    $"No request exists with ID " +
-                    $"{requestId}."));
+                    status:
+                        StatusCodes
+                            .Status404NotFound,
+                    code:
+                        "REQUEST_NOT_FOUND",
+                    title:
+                        "Request not found",
+                    detail:
+                        $"No request exists with ID " +
+                        $"{requestId}.",
+                    retryable:
+                        false));
         }
 
-        return Ok(MapResponse(request));
+        return Ok(
+            MapResponse(request));
     }
 
     [HttpPost("{requestId:guid}/retry")]
-    [ProducesResponseType<RequestAcceptedResponse>(
-        StatusCodes.Status202Accepted)]
+    [EnableRateLimiting(
+        "investigation-create")]
+    [ProducesResponseType<
+        RequestAcceptedResponse>(
+            StatusCodes.Status202Accepted)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status429TooManyRequests)]
     public async Task<
         ActionResult<RequestAcceptedResponse>>
         Retry(
@@ -181,40 +228,83 @@ public sealed class AgentRequestsController
         {
             return NotFound(
                 CreateProblem(
-                    StatusCodes.Status404NotFound,
-                    "REQUEST_NOT_FOUND",
-                    "Request not found",
-                    $"No request exists with ID " +
-                    $"{requestId}."));
+                    status:
+                        StatusCodes
+                            .Status404NotFound,
+                    code:
+                        "REQUEST_NOT_FOUND",
+                    title:
+                        "Request not found",
+                    detail:
+                        $"No request exists with ID " +
+                        $"{requestId}.",
+                    retryable:
+                        false));
         }
 
         if (!original.Retryable)
         {
             return BadRequest(
                 CreateProblem(
-                    StatusCodes.Status400BadRequest,
-                    "REQUEST_NOT_RETRYABLE",
-                    "Request cannot be retried",
-                    "Only failed or cancelled " +
-                    "retryable requests can be retried."));
+                    status:
+                        StatusCodes
+                            .Status400BadRequest,
+                    code:
+                        "REQUEST_NOT_RETRYABLE",
+                    title:
+                        "Request cannot be retried",
+                    detail:
+                        "Only failed or cancelled " +
+                        "retryable requests can be " +
+                        "retried.",
+                    retryable:
+                        false));
         }
 
-        var correlationId =
-            HttpContext.Response.Headers[
-                "X-Correlation-ID"]
-                .FirstOrDefault()
-            ??
-            HttpContext.TraceIdentifier;
+        /*
+         * The persisted message already passed the
+         * IncidentInputPolicy during the original
+         * request. Re-evaluate it as defense in depth.
+         */
+        var policyResult =
+            _inputPolicy.Evaluate(
+                original.Message);
+
+        if (!policyResult.IsAccepted)
+        {
+            return BadRequest(
+                CreateProblem(
+                    status:
+                        StatusCodes
+                            .Status400BadRequest,
+                    code:
+                        policyResult.ErrorCode
+                        ??
+                        "INVALID_INCIDENT_DESCRIPTION",
+                    title:
+                        "Stored incident description " +
+                        "rejected",
+                    detail:
+                        policyResult.ErrorMessage
+                        ??
+                        "The stored incident " +
+                        "description is invalid.",
+                    retryable:
+                        false));
+        }
 
         var retry =
             new AgentRequestRecord(
-                id: Guid.NewGuid(),
-                message: original.Message,
+                id:
+                    Guid.NewGuid(),
+                message:
+                    policyResult.NormalizedInput!,
                 environment:
                     original.Environment,
                 severity:
                     original.Severity,
-                simulateFailure: false,
+                simulateFailure:
+                    false,
                 attemptNumber:
                     original.AttemptNumber + 1,
                 retriedFromRequestId:
@@ -222,7 +312,7 @@ public sealed class AgentRequestsController
                 createdAt:
                     DateTimeOffset.UtcNow,
                 correlationId:
-                    correlationId);
+                    HttpContext.TraceIdentifier);
 
         await _repository.AddAsync(
             retry,
@@ -234,7 +324,8 @@ public sealed class AgentRequestsController
                 values:
                     new
                     {
-                        requestId = retry.Id
+                        requestId =
+                            retry.Id
                     })
             ??
             $"/api/v1/requests/" +
@@ -250,6 +341,16 @@ public sealed class AgentRequestsController
     }
 
     [HttpGet("{requestId:guid}/stream")]
+    [EnableRateLimiting(
+        "investigation-stream")]
+    [ProducesResponseType(
+        StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(
+        StatusCodes.Status429TooManyRequests)]
     public async Task Stream(
         Guid requestId,
         CancellationToken cancellationToken)
@@ -262,15 +363,23 @@ public sealed class AgentRequestsController
         if (request is null)
         {
             Response.StatusCode =
-                StatusCodes.Status404NotFound;
+                StatusCodes
+                    .Status404NotFound;
 
             await Response.WriteAsJsonAsync(
                 CreateProblem(
-                    StatusCodes.Status404NotFound,
-                    "REQUEST_NOT_FOUND",
-                    "Request not found",
-                    $"No request exists with ID " +
-                    $"{requestId}."),
+                    status:
+                        StatusCodes
+                            .Status404NotFound,
+                    code:
+                        "REQUEST_NOT_FOUND",
+                    title:
+                        "Request not found",
+                    detail:
+                        $"No request exists with ID " +
+                        $"{requestId}.",
+                    retryable:
+                        false),
                 cancellationToken);
 
             return;
@@ -280,15 +389,23 @@ public sealed class AgentRequestsController
             AgentRequestStatus.Completed)
         {
             Response.StatusCode =
-                StatusCodes.Status409Conflict;
+                StatusCodes
+                    .Status409Conflict;
 
             await Response.WriteAsJsonAsync(
                 CreateProblem(
-                    StatusCodes.Status409Conflict,
-                    "REQUEST_ALREADY_COMPLETED",
-                    "Request already completed",
-                    "A completed request cannot " +
-                    "be streamed again."),
+                    status:
+                        StatusCodes
+                            .Status409Conflict,
+                    code:
+                        "REQUEST_ALREADY_COMPLETED",
+                    title:
+                        "Request already completed",
+                    detail:
+                        "A completed request cannot " +
+                        "be streamed again.",
+                    retryable:
+                        false),
                 cancellationToken);
 
             return;
@@ -306,7 +423,8 @@ public sealed class AgentRequestsController
         Response.Headers.Connection =
             "keep-alive";
 
-        Response.Headers["X-Accel-Buffering"] =
+        Response.Headers[
+            "X-Accel-Buffering"] =
             "no";
 
         request.MarkProcessing();
@@ -349,8 +467,8 @@ public sealed class AgentRequestsController
             await SaveWithoutCancellationAsync();
 
             _logger.LogInformation(
-                "Agent request {RequestId} " +
-                "was cancelled. Correlation ID: " +
+                "Agent request {RequestId} was " +
+                "cancelled. Correlation ID: " +
                 "{CorrelationId}.",
                 request.Id,
                 request.CorrelationId);
@@ -359,7 +477,8 @@ public sealed class AgentRequestsController
         {
             request.MarkFailed(
                 "AGENT_SERVICE_UNAVAILABLE",
-                retryable: true);
+                retryable:
+                    true);
 
             await SaveWithoutCancellationAsync();
 
@@ -384,7 +503,8 @@ public sealed class AgentRequestsController
         }
     }
 
-    private async Task SaveWithoutCancellationAsync()
+    private async Task
+        SaveWithoutCancellationAsync()
     {
         try
         {
@@ -395,7 +515,8 @@ public sealed class AgentRequestsController
         {
             _logger.LogError(
                 persistenceException,
-                "Failed to persist final request state.");
+                "Failed to persist the final " +
+                "request state.");
         }
     }
 
@@ -442,18 +563,22 @@ public sealed class AgentRequestsController
             request.CompletedAt);
     }
 
-    private static ProblemDetails CreateProblem(
+    private ProblemDetails CreateProblem(
         int status,
         string code,
         string title,
-        string detail)
+        string detail,
+        bool retryable)
     {
         var problem =
             new ProblemDetails
             {
                 Status = status,
+
                 Title = title,
+
                 Detail = detail,
+
                 Type =
                     "https://agentops-nexus/errors/" +
                     code.ToLowerInvariant()
@@ -463,7 +588,10 @@ public sealed class AgentRequestsController
             code;
 
         problem.Extensions["retryable"] =
-            status >= 500;
+            retryable;
+
+        problem.Extensions["correlationId"] =
+            HttpContext.TraceIdentifier;
 
         return problem;
     }
