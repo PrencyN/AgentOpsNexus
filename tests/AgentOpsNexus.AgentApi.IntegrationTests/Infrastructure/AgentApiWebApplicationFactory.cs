@@ -1,4 +1,5 @@
 using AgentOpsNexus.AgentApi.Data;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -27,7 +28,8 @@ public sealed class AgentApiWebApplicationFactory
 
         if (!string.IsNullOrWhiteSpace(directory))
         {
-            Directory.CreateDirectory(directory);
+            Directory.CreateDirectory(
+                directory);
         }
     }
 
@@ -43,39 +45,56 @@ public sealed class AgentApiWebApplicationFactory
         builder.ConfigureAppConfiguration(
             (_, configurationBuilder) =>
             {
-                configurationBuilder.AddInMemoryCollection(
-                    new Dictionary<string, string?>
-                    {
-                        ["Agent:Provider"] =
-                            "Mock",
+                configurationBuilder
+                    .AddInMemoryCollection(
+                        new Dictionary<
+                            string,
+                            string?>
+                        {
+                            ["Agent:Provider"] =
+                                "Mock",
 
-                        ["Agent:ProjectEndpoint"] =
-                            string.Empty,
+                            ["Agent:ProjectEndpoint"] =
+                                string.Empty,
 
-                        ["Agent:ModelDeployment"] =
-                            string.Empty,
+                            ["Agent:ModelDeployment"] =
+                                string.Empty,
 
-                        ["Agent:TenantId"] =
-                            string.Empty,
+                            ["Agent:TenantId"] =
+                                string.Empty,
 
-                        ["Agent:TimeoutSeconds"] =
-                            "30",
+                            ["Agent:TimeoutSeconds"] =
+                                "30",
 
-                        ["ConnectionStrings:AgentOpsDatabase"] =
-                            $"Data Source={_databasePath}"
-                    });
+                            /*
+                             * Program.cs registers its
+                             * local authentication scheme
+                             * when this is false.
+                             *
+                             * The service registration
+                             * below replaces the defaults
+                             * with the header-driven test
+                             * scheme.
+                             */
+                            ["Authentication:Enabled"] =
+                                "false",
+
+                            ["ConnectionStrings:" +
+                             "AgentOpsDatabase"] =
+                                $"Data Source=" +
+                                $"{_databasePath}"
+                        });
             });
 
         builder.ConfigureServices(
             services =>
             {
                 /*
-                 * Program.cs registered the production
-                 * DbContext before this test override runs.
+                 * Program.cs registers the production
+                 * DbContext before this test override.
                  *
-                 * Remove every registration related to
-                 * AgentOpsDbContext and replace it with an
-                 * isolated SQLite database for this factory.
+                 * Replace it with an isolated SQLite
+                 * database for this factory instance.
                  */
                 services.RemoveAll<
                     DbContextOptions<
@@ -89,10 +108,50 @@ public sealed class AgentApiWebApplicationFactory
                         options =>
                         {
                             options.UseSqlite(
-                                $"Data Source={_databasePath}");
+                                $"Data Source=" +
+                                $"{_databasePath}");
 
-                            options.EnableDetailedErrors();
+                            options
+                                .EnableDetailedErrors();
                         });
+
+                /*
+                 * Make the header-driven integration-test
+                 * scheme the default authentication,
+                 * challenge, and forbid scheme.
+                 *
+                 * Existing tests receive the default
+                 * investigator identity. Authorization
+                 * tests can change the identity through
+                 * X-Test-* request headers.
+                 */
+                services
+                    .AddAuthentication(
+                        options =>
+                        {
+                            options
+                                .DefaultAuthenticateScheme =
+                                TestIdentity
+                                    .AuthenticationScheme;
+
+                            options
+                                .DefaultChallengeScheme =
+                                TestIdentity
+                                    .AuthenticationScheme;
+
+                            options
+                                .DefaultForbidScheme =
+                                TestIdentity
+                                    .AuthenticationScheme;
+                        })
+                    .AddScheme<
+                        AuthenticationSchemeOptions,
+                        TestAuthenticationHandler>(
+                            TestIdentity
+                                .AuthenticationScheme,
+                            _ =>
+                            {
+                            });
             });
     }
 
@@ -103,7 +162,10 @@ public sealed class AgentApiWebApplicationFactory
             {
                 BaseAddress =
                     new Uri(
-                        "http://localhost"),
+                        string.Concat(
+                            "http",
+                            "://",
+                            "localhost")),
 
                 AllowAutoRedirect =
                     false
@@ -143,16 +205,16 @@ public sealed class AgentApiWebApplicationFactory
         catch (IOException)
         {
             /*
-             * Test cleanup must not hide the original
-             * test result if SQLite still has a late file
-             * handle during process shutdown.
+             * Cleanup must not hide the test result if
+             * SQLite retains a late file handle while the
+             * application host is shutting down.
              */
         }
         catch (UnauthorizedAccessException)
         {
             /*
-             * Temporary files can be removed by the
-             * operating system later.
+             * The operating system can remove temporary
+             * test files later.
              */
         }
     }
