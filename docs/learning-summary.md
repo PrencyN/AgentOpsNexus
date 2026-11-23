@@ -2,49 +2,50 @@
 
 ## Overview
 
-I designed and implemented AgentOps Nexus AI as a full-stack ReactJS, ASP.NET Core, and Microsoft Foundry capstone.
+I designed and implemented AgentOps Nexus AI as a full-stack React, ASP.NET Core, Microsoft Foundry, and Microsoft Agent Framework capstone.
 
-The project evolved from a deterministic mock-agent workflow into an evidence-grounded agentic application with:
+The project now includes:
 
-- React request interface
+- React incident workspace
 - ASP.NET Core API
-- Microsoft Foundry integration
+- Foundry and Mock providers
 - Agent-selected tools
 - Server-Sent Events
 - Evidence citations
-- Persistent request history
-- Failure and retry behavior
+- Evidence navigation
+- Persistent history
+- Failure and retry
 - OpenTelemetry
 - Security controls
-- Deterministic AI evaluation
-- Automated tests
+- Deterministic evaluation
+- Unit tests
+- API integration tests
+- Component tests
+- Playwright browser tests
 - GitHub Actions CI
 
-The most important learning was that an AI-enabled application requires much more than a model call. Reliable AI software needs evidence boundaries, input validation, failure handling, persistence, observability, tests, security, and honest limitations.
+The main lesson was that an AI application requires much more than a model call. Reliable AI software needs evidence boundaries, validation, persistence, observability, security, deterministic tests, and transparent limitations.
 
-## ReactJS learning
+## React and TypeScript learning
 
-I improved my practical understanding of:
+I improved my understanding of:
 
-- React component composition
-- TypeScript interfaces
+- Component composition
 - Controlled forms
 - React Hook Form
 - Zod validation
 - Asynchronous state
-- Loading states
-- Error states
-- Retry experiences
-- Request-history presentation
+- Loading and retry states
 - Server-Sent Events
 - Markdown rendering
-- Accessible evidence controls
-- Keyboard focus management
+- Accessible controls
+- Keyboard focus
+- Persistent history
 - Vitest
 - Testing Library
-- Vite builds
+- Playwright
 
-The application explicitly represents:
+The interface represents:
 
 ```text
 Idle
@@ -55,8 +56,6 @@ Completed
 Failed
 Cancelled
 ```
-
-The main frontend lesson was that failure, retry, cancellation, and empty states must be designed rather than treated as secondary conditions.
 
 ## ASP.NET Core learning
 
@@ -72,81 +71,67 @@ I implemented:
 - Server-Sent Events
 - Cancellation tokens
 - Async streams
-- Repository abstraction
-- Entity Framework Core
+- EF Core
 - SQLite
 - Migrations
-- Logging scopes
-- Security headers
 - OpenTelemetry
-- xUnit tests
-
-The main backend lesson was that long-running model execution should not hold open database transactions.
-
-The API persists request-status transitions before and after agent execution rather than keeping a transaction open while waiting for Foundry.
+- Unit tests
+- Integration tests
 
 ## GenAI learning
 
-I connected an ASP.NET Core application to Microsoft Foundry.
-
-The implementation includes:
+I connected the API to Microsoft Foundry with:
 
 - Project endpoint configuration
 - Model deployment configuration
 - Tenant-specific authentication
-- Application-owned agent instructions
+- Application-owned instructions
 - Streaming model updates
 - Timeout handling
 - Cancellation handling
 - Mock and Foundry provider selection
 
-The main GenAI lesson was that response quality is not enough. A response also needs evidence, traceability, safe boundaries, and explicit missing information.
+The key lesson was that model quality is not enough. Responses also require evidence, traceability, safe boundaries, and explicit missing information.
 
 ## Agentic AI learning
 
-I learned the difference between a simple model call and an agentic workflow.
-
-AgentOps Nexus supports agentic behavior because the model can decide when to invoke:
+The model can decide whether to call:
 
 ```text
 GetRecentDeployments
 ```
 
-Application code remains responsible for:
+Application code controls:
 
 - Tool registration
 - Tool descriptions
-- Input validation
-- Allowed environments
+- Allowed arguments
+- Environment restrictions
 - Lookback limits
-- Evidence normalization
+- Evidence structure
 - Logging
 - Metrics
 - Error handling
 - Safety boundaries
 
-The main agentic lesson was that the model must never define its own security boundary.
+The model must not define its own security boundary.
 
 ## Evidence-grounding learning
 
-I implemented evidence identifiers such as:
+The project uses identifiers such as:
 
 ```text
 DEP-EV-001
 DEP-EV-002
 ```
 
-Deployment claims must cite exact evidence IDs.
+The React UI turns citations into accessible buttons connected to evidence cards.
 
-The React UI transforms citations into interactive controls connected to evidence cards.
+The central grounding rule is:
 
-The deterministic evaluator compares cited identifiers with supplied identifiers.
+> Correlation does not prove causation.
 
-The primary grounding lesson was:
-
-> A recent deployment may support an investigation hypothesis, but correlation does not prove causation.
-
-The response therefore separates:
+Responses separate:
 
 ```text
 Known facts
@@ -160,7 +145,7 @@ Limitations
 
 ## Persistence learning
 
-I replaced temporary in-memory history with:
+I implemented:
 
 ```text
 Entity Framework Core
@@ -169,8 +154,8 @@ SQLite
 
 The persistence model includes:
 
-- Request ID
-- Message
+- Request identity
+- Incident description
 - Environment
 - Severity
 - Status
@@ -180,28 +165,15 @@ The persistence model includes:
 - Attempt number
 - Retry parent
 - Correlation ID
-- Created time
-- Started time
-- Completed time
+- Timestamps
 
-Challenges included:
-
-- Async repository design
-- EF entity configuration
-- Retry relationships
-- Migrations
-- SQLite file exclusions
-- Scoped DbContext lifetimes
-- Persistence after restarts
-- DateTimeOffset ordering in SQLite
-
-The repository abstraction allows unit tests to continue using an in-memory implementation.
+Retry preserves the original failed request and creates a linked second attempt.
 
 ## Observability learning
 
 I implemented:
 
-- Correlation-ID generation
+- Correlation-ID propagation
 - Safe caller-ID preservation
 - Unsafe-ID replacement
 - Logging scopes
@@ -211,283 +183,208 @@ I implemented:
 - Custom metrics
 - Console export
 
-Activities:
-
-```text
-agent.investigate
-tool.GetRecentDeployments
-```
-
-Metrics:
-
-```text
-agentops.investigations
-agentops.investigation.failures
-agentops.investigation.duration
-agentops.tool.invocations
-agentops.tool.failures
-agentops.tool.duration
-agentops.tool.evidence.count
-```
-
-The main observability lesson was to record useful operational metadata without recording sensitive content.
-
-Custom telemetry excludes prompts, generated responses, tokens, API keys, tenant IDs, and authentication codes.
+Custom telemetry excludes prompt text, response text, tokens, API keys, tenant IDs, and user-secret values.
 
 ## Security learning
 
 I implemented:
 
-- .NET user secrets
+- User secrets
 - Safe checked-in settings
-- Git exclusions
 - Input normalization
 - Null-byte rejection
 - Control-character rejection
-- Maximum-length validation
+- Length validation
 - Security headers
 - Rate limiting
 - Correlation-ID validation
-- Tool argument validation
-- Deterministic output evaluation
+- Tool validation
+- Output evaluation
 - Dependency audits
 - Human-approval constraints
 
-Prompt injection cannot be solved by blocking a few phrases. Legitimate incident text may contain malicious instructions.
+Prompt injection cannot be solved by blocking a small list of phrases. Stronger security combines instruction hierarchy, bounded tools, evidence validation, unsupported-access restrictions, output evaluation, least privilege, and human approval.
 
-A stronger design combines:
+## Backend testing learning
 
-- Instruction hierarchy
-- User-data boundaries
-- Bounded tools
-- Input allowlists
-- Evidence validation
-- Unsupported-access restrictions
-- Output evaluation
-- Human approval
-- Least privilege
-
-## Testing learning
-
-Backend testing uses:
+### Unit testing
 
 ```text
-xUnit
-Fluent Assertions
+Framework: xUnit
+Tests: 58 passed
 ```
 
-Frontend testing uses:
-
-```text
-Vitest
-Testing Library
-```
-
-Validated results:
-
-```text
-Backend tests: 58 passed
-Frontend tests: 18 passed
-```
-
-Tests cover:
+Coverage includes:
 
 - Repository behavior
-- Retry relationships
-- Mock agent events
+- Agent events
 - Deployment tools
-- Tool validation
 - Input policy
 - Security headers
-- Deterministic evaluation
-- Form behavior
-- Markdown rendering
+- Response evaluation
+- Retry relationships
+
+### API integration testing
+
+```text
+Framework: xUnit
+Hosting: WebApplicationFactory<Program>
+Tests: 25 passed
+```
+
+I learned to use:
+
+```text
+Microsoft.AspNetCore.Mvc.Testing
+WebApplicationFactory
+TestServer
+Temporary SQLite databases
+Mock agent injection
+Real middleware
+Real controllers
+Real SSE endpoints
+```
+
+Integration-test parallelism is disabled to prevent shared rate-limit and database state from making tests unreliable.
+
+## Frontend testing learning
+
+### Component testing
+
+```text
+Framework: Vitest and Testing Library
+Tests: 18 passed
+```
+
+Coverage includes:
+
+- Form validation
+- Busy states
+- Markdown
 - Evidence parsing
+- Evidence badges
+- Focus behavior
+- Evidence cards
+
+Vitest is restricted to `src/` so Playwright files are not accidentally collected.
+
+### Browser E2E testing
+
+```text
+Framework: Playwright
+Browser: Chromium
+Workers: 1
+Tests: 5 passed
+```
+
+The E2E suite validates:
+
+- Successful investigation
+- Invalid input
+- Simulated failure
+- Retry to attempt 2
 - Evidence navigation
+- History after reload
 
-The main testing lesson was to keep external AI calls out of deterministic CI.
+The browser suite starts the ASP.NET Core API and Vite automatically and uses an isolated SQLite database.
 
-Mock mode makes CI repeatable, fast, and credential-free. Real Foundry behavior is demonstrated separately.
+## SSE troubleshooting learning
+
+Browser tests exposed differences that unit tests did not reveal:
+
+- SSE streams can use CRLF line endings.
+- A stream can close without a trailing blank line.
+- Absolute API stream URLs can conflict with the browser origin.
+- History UI state can be stale until explicitly refreshed.
+
+I fixed these by:
+
+- Normalizing CRLF to LF
+- Processing a final buffered event
+- Checking `text/event-stream`
+- Routing stream requests through the Vite `/api` proxy
+- Polling the persisted API status in browser tests
+- Refreshing history before asserting final state
+
+This demonstrated why browser-level automation is valuable even when unit and API integration tests already pass.
 
 ## Continuous integration learning
 
-I created a GitHub Actions workflow that performs:
+The project validates:
 
-- Repository-local .NET tool restore
+- .NET tool restore
+- Solution restore
 - Release build
-- Backend tests
+- Unit tests
+- Integration tests
 - NuGet vulnerability audit
-- EF migration verification
-- `npm ci`
-- Production dependency audit
-- Development dependency report
-- Frontend tests
+- EF migration visibility
+- npm lockfile installation
+- Frontend component tests
 - Frontend production build
-- Artifact upload
+- Playwright browser tests
+- Artifact creation
 
-The main CI lesson was that a successful local build is not sufficient.
+Mock mode keeps automation deterministic and credential-free.
 
-A clean GitHub-hosted runner proves that committed files, lockfiles, tools, and tests are enough for another environment to build the project.
-
-## Git and delivery learning
-
-The project was developed through milestone branches:
+## Current validated results
 
 ```text
-Milestone 1: Mock workflow
-Milestone 2: Foundry integration
-Milestone 3: Grounded tool
-Milestone 4: Evidence UI
-Milestone 5: Persistence and observability
-Milestone 6: Security, evaluation, and CI
-Milestone 7: Documentation
+Backend unit tests:          58 passed
+Backend integration tests:   25 passed
+Backend total:               83 passed
+Frontend component tests:    18 passed
+Playwright E2E tests:         5 passed
+NuGet vulnerable packages:    0
+npm production vulnerabilities: 0
+Frontend build:              succeeded
 ```
-
-I practiced:
-
-- Feature branches
-- Small commits
-- Stable checkpoints
-- Pull requests
-- CI validation
-- Merge commits
-- Branch cleanup
-- Git ignore rules
-- Secret review
-- Remote synchronization
-
-The main delivery lesson was that small, verified commits make troubleshooting and review easier.
 
 ## Architecture decisions
 
 ### Modular monolith
 
-The backend remains a modular monolith because:
+The backend remains a modular monolith because the domain is cohesive, one developer owns the application, and independent scaling is not yet required.
 
-- One developer owns the platform.
-- The domain is cohesive.
-- Independent scaling is not required yet.
-- A distributed system would increase local setup and testing complexity.
+### One React application
 
-Interfaces remain available for a future Deployment Evidence service extraction.
-
-### Single React application
-
-The frontend remains one application because:
-
-- The experience is cohesive.
-- One owner controls the UI.
-- Independent deployment is not required.
-- A full microfrontend runtime would add unnecessary complexity.
-
-A future evidence-panel remote may demonstrate independent composition.
+The frontend remains one application because independent deployment is not currently justified.
 
 ### SQLite
 
-SQLite provides simple, persistent local execution without Docker.
-
-EF Core keeps the design portable to PostgreSQL.
+SQLite supports simple local persistence and isolated integration and E2E testing. EF Core preserves a migration path to PostgreSQL.
 
 ### Server-Sent Events
 
-SSE fits the current server-to-browser streaming direction.
+SSE matches the server-to-browser streaming requirement.
 
-The application does not require full bidirectional WebSocket communication.
+### Deterministic automation
+
+Mock mode provides repeatable tests without Foundry credentials, model variability, or external throttling.
 
 ## Challenges overcome
 
-### Foundry streaming
-
-I connected:
-
-```text
-Foundry update stream
-→ ASP.NET Core async enumerable
-→ Server-Sent Events
-→ React state updates
-```
-
-### Evidence rendering
-
-I converted:
-
-```text
-[DEP-EV-001]
-```
-
-into Markdown evidence links and rendered the links as accessible buttons connected to matching cards.
-
-### EF command-line version
-
-The global EF tool did not match the .NET 10 project.
-
-I pinned:
-
-```text
-dotnet-ef 10.0.0
-```
-
-in the repository tool manifest.
-
-### SQLite ordering
-
-SQLite could not reliably translate the required DateTimeOffset ordering.
-
-The small development history dataset is loaded and sorted in memory. A PostgreSQL implementation can perform ordering in SQL.
-
-### Build file locking
-
-A running API process locked assemblies during clean builds.
-
-I learned to stop the API before clean and build operations.
-
-### Dependency vulnerabilities
-
-An older frontend toolchain introduced vulnerable development dependencies.
-
-I upgraded and pinned Vite and Vitest while preserving a reproducible lockfile.
-
-The remaining unpatched development-only advisory is documented rather than hidden.
-
-### Deterministic evaluation
-
-I designed repeatable checks for:
-
-- Invented evidence
-- Missing citations
-- Causation overstatement
-- Missing approval
-- False execution claims
-- Unsupported access
-- Potential secret disclosure
-- System-prompt disclosure
+- Foundry integration
+- Agent-selected tools
+- Evidence rendering
+- SQLite migrations
+- DateTimeOffset ordering
+- Build file locking
+- Dependency vulnerabilities
+- Deterministic response evaluation
+- WebApplicationFactory configuration
+- Isolated SQLite integration databases
+- Test parallelism
+- Vitest and Playwright discovery conflicts
+- ES-module path resolution
+- SSE CRLF parsing
+- Same-origin stream routing
+- Browser history synchronization
+- E2E database isolation
 
 ## Planned improvements
 
-### Integration tests
-
-Add:
-
-```text
-Microsoft.AspNetCore.Mvc.Testing
-WebApplicationFactory<Program>
-Temporary SQLite
-```
-
-### E2E tests
-
-Add Playwright tests for:
-
-- Success
-- Invalid input
-- Failure
-- Retry
-- Evidence navigation
-- Persistent history
-
 ### Enterprise identity
-
-Add:
 
 ```text
 Microsoft Entra ID
@@ -497,29 +394,29 @@ RBAC
 User-scoped history
 ```
 
-### Deployment evidence microservice
-
-Extract:
+### Deployment Evidence microservice
 
 ```text
 AgentOpsNexus.DeploymentEvidence.Api
+Typed HttpClient
+Timeout
+Retry with jitter
+Circuit breaker
+Contract tests
+Distributed tracing
 ```
 
-Add typed HTTP clients, retries, timeout, circuit breaker, contract tests, and distributed tracing.
-
-### Microfrontend proof
-
-Extract EvidenceBadge and EvidencePanel into:
+### Browser expansion
 
 ```text
-frontend/evidence-remote
+Firefox
+WebKit
+Mobile browser projects
+Visual regression
+axe-core accessibility scans
 ```
 
-The shell will provide a local fallback.
-
 ### Production deployment
-
-Use:
 
 ```text
 Azure Static Web Apps
@@ -534,13 +431,11 @@ Bicep
 
 ### Performance
 
-Add:
-
-- Lazy loading
 - Code splitting
-- Bundle visualizer
+- Lazy loading
+- Bundle analysis
 - Bundle budgets
-- Pagination
+- History pagination
 - Load testing
 
 ## Individual contribution
@@ -556,24 +451,24 @@ I personally worked through:
 - Tool design
 - Evidence modeling
 - Persistence
-- Retry workflow
+- Failure and retry
 - Observability
 - Security controls
-- Automated tests
+- Unit testing
+- Integration testing
+- Browser E2E testing
 - Dependency management
 - Git workflows
 - GitHub Actions
 - Documentation
 - Manual demonstration
 
-I also diagnosed Windows and PowerShell-specific issues involving .NET CLI, EF tools, npm, Git, browser authentication, line endings, and locked build files.
-
 ## Conclusion
 
 AgentOps Nexus strengthened my practical skills in:
 
 ```text
-ReactJS
+React
 TypeScript
 ASP.NET Core
 C#
@@ -586,13 +481,17 @@ GenAI
 Agentic AI
 OpenTelemetry
 xUnit
+WebApplicationFactory
 Vitest
+Testing Library
+Playwright
+Chromium automation
 Git
 GitHub Actions
 Security
 System design
 ```
 
-The most significant lesson was that the model is only one component of an AI application.
+The most significant lesson was that the model is only one component of a reliable AI application.
 
-Reliable AI software depends on evidence, validation, tool boundaries, persistence, observability, tests, security controls, user experience, and honest limitations.
+Reliable AI software depends on evidence, validation, bounded tools, persistence, observability, tests, security controls, user experience, and honest limitations.

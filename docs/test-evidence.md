@@ -4,522 +4,306 @@
 
 This document records the automated and manual evidence used to validate AgentOps Nexus AI.
 
-The capstone validation covers:
+Validation covers:
 
 - Successful requests
 - Invalid inputs
 - AI service failures
 - Retry behavior
-- Persistent request history
+- Persistent history
 - React-to-ASP.NET Core integration
-- ASP.NET Core-to-agent integration
+- ASP.NET Core agent execution
+- Server-Sent Events
 - Evidence citations
-- Security and observability controls
+- Security controls
+- Correlation IDs
+- Rate limiting
+- Dependency audits
 
-## Current automated results
+## Current validated results
 
-### Backend
+```text
+Backend unit tests:          58 passed
+Backend integration tests:   25 passed
+Backend total:               83 passed
+Frontend component tests:    18 passed
+Playwright Chromium tests:    5 passed
+NuGet vulnerable packages:    0
+npm production vulnerabilities: 0
+Frontend production build:   succeeded
+```
+
+## Test layers
+
+| Layer | Technology | Result |
+|---|---|---:|
+| Domain and repository tests | xUnit | Passed |
+| Agent tests | xUnit | Passed |
+| Deployment-tool tests | xUnit | Passed |
+| Input-security tests | xUnit | Passed |
+| Evaluator tests | xUnit | Passed |
+| Security middleware tests | xUnit | Passed |
+| API integration tests | `WebApplicationFactory<Program>` | Passed |
+| SQLite integration tests | EF Core and isolated SQLite | Passed |
+| SSE integration tests | ASP.NET Core TestServer | Passed |
+| React component tests | Vitest and Testing Library | Passed |
+| Browser E2E tests | Playwright Chromium | Passed |
+| Live Foundry validation | Manual | Passed |
+| CI validation | GitHub Actions | Implemented |
+
+## Backend unit tests
 
 ```text
 Framework: xUnit
-Test project: AgentOpsNexus.AgentApi.UnitTests
-Total tests: 58
+Project: AgentOpsNexus.AgentApi.UnitTests
+Total: 58
 Passed: 58
 Failed: 0
 Skipped: 0
 ```
 
-### Frontend
+Unit coverage includes:
+
+- Repository behavior
+- Request status transitions
+- Retry relationships
+- Mock-agent events
+- Simulated failures
+- Deployment evidence
+- Tool validation
+- Input security
+- Security headers
+- Correlation IDs
+- Deterministic response evaluation
+
+## Backend integration tests
+
+```text
+Framework: xUnit
+Hosting: Microsoft.AspNetCore.Mvc.Testing
+Factory: WebApplicationFactory<Program>
+Project: AgentOpsNexus.AgentApi.IntegrationTests
+Total: 25
+Passed: 25
+Failed: 0
+Skipped: 0
+```
+
+Integration tests use:
+
+- The real ASP.NET Core middleware pipeline
+- Real controllers
+- Real request contracts
+- Real security headers
+- Real correlation middleware
+- Real rate limiting
+- Real EF Core persistence
+- Isolated temporary SQLite databases
+- Deterministic Mock agent provider
+- Real SSE streaming endpoints
+
+Integration-test parallelism is disabled for deterministic database and rate-limit behavior.
+
+### Request creation coverage
+
+- Valid request returns HTTP 202.
+- Accepted response includes a request ID.
+- Accepted response includes a stream URL.
+- Safe correlation ID is preserved.
+- Short input returns HTTP 400.
+- Empty input returns HTTP 400.
+- Oversized input returns HTTP 400.
+- Null byte returns HTTP 400.
+- Unsupported control character returns HTTP 400.
+- Windows line endings are normalized.
+
+### Security-pipeline coverage
+
+- `X-Content-Type-Options` is present.
+- `Referrer-Policy` is present.
+- `X-Frame-Options` is present.
+- Content Security Policy is restrictive.
+- Permissions Policy disables sensitive features.
+- Cache control prevents storage.
+- A missing correlation ID is generated.
+- A safe caller correlation ID is preserved.
+- An unsafe correlation ID is replaced.
+- Header and response-body correlation IDs match.
+- The creation rate limit returns HTTP 429.
+
+### History and retry coverage
+
+- A created request appears in history.
+- An unknown request returns HTTP 404.
+- A simulated failure is persisted.
+- Failure is retryable.
+- Retry creates a new request.
+- Attempt number increments to 2.
+- Retry references the original request.
+- Original failed attempt remains available.
+- History is returned newest first.
+
+### SSE coverage
+
+- Stream content type is `text/event-stream`.
+- Stream includes `agent.started`.
+- Stream includes `agent.progress`.
+- Stream includes `agent.message.delta`.
+- Stream includes `agent.completed`.
+- Simulated failure includes `agent.failed`.
+- Successful stream persists `Completed`.
+- Failure stream persists `Failed`.
+- Unknown request returns HTTP 404.
+- Completed request cannot be streamed again.
+
+## Frontend component tests
 
 ```text
 Framework: Vitest and Testing Library
 Test files: 3
-Total tests: 18
+Total: 18
 Passed: 18
 Failed: 0
 ```
 
-### Dependency audits
-
-```text
-NuGet vulnerable packages: 0
-Frontend production dependency vulnerabilities: 0
-```
-
-### Continuous integration
-
-```text
-Workflow: AgentOps Nexus CI
-Backend job: Passed
-Frontend job: Passed
-Final CI result: Passed
-```
-
-## Test layers
-
-| Layer | Technology | Status |
-|---|---|---:|
-| Domain and repository tests | xUnit | Implemented |
-| Agent tests | xUnit | Implemented |
-| Deployment-tool tests | xUnit | Implemented |
-| Input-security tests | xUnit | Implemented |
-| Evaluator tests | xUnit | Implemented |
-| Security-header tests | xUnit | Implemented |
-| React component tests | Vitest and Testing Library | Implemented |
-| API integration tests | WebApplicationFactory | Planned |
-| Browser E2E tests | Playwright | Planned |
-| Live Foundry validation | Manual demonstration | Implemented |
-| CI validation | GitHub Actions | Implemented |
-
-## Backend test coverage
-
-### Repository behavior
-
-Validated behavior includes:
-
-- Add and retrieve a request
-- Reject duplicate request IDs
-- Return null for an unknown request
-- Return newest records first
-- Persist domain mutations
-- Persist completed status
-- Persist failed status
-- Persist cancelled status
-- Preserve retry state
-- Preserve correlation ID
-- Honor cancellation tokens
-
-### Mock incident agent
-
-Validated behavior includes:
-
-- `agent.started`
-- `agent.progress`
-- `agent.message.delta`
-- `agent.completed`
-- Simulated failure
-- Cancellation
-- Event timestamps
-- Response generation
-
-### Deployment tool
-
-Validated behavior includes:
-
-- PaymentService evidence lookup
-- CheckoutService evidence lookup
-- Production environment filtering
-- Evidence field serialization
-- Input trimming
-- Case-insensitive matching
-- Invalid environment rejection
-- Invalid lookback rejection
-- Invalid service-name rejection
-- Excessive service-name rejection
-- Empty evidence response
-- Mock-data disclosure
-- Cancellation propagation
-- Metrics-compatible dependency construction
-
-### Incident input policy
-
-Validated behavior includes:
-
-- Valid input acceptance
-- Trimming
-- Required input
-- Minimum length
-- Maximum length
-- Null-byte rejection
-- Unsafe control-character rejection
-- Newline and tab acceptance
-- Windows line-ending normalization
-- Excessive blank-line rejection
-- Prompt-injection text preserved as untrusted content
-
-### Deterministic response evaluator
-
-Validated behavior includes:
-
-- Safe grounded response acceptance
-- Unknown evidence-ID rejection
-- Missing citation detection
-- Missing mock-evidence disclosure
-- Causation overstatement detection
-- Rollback approval enforcement
-- Executed rollback-claim detection
-- Unsupported system-access detection
-- Potential secret-disclosure detection
-- System-prompt disclosure detection
-- Empty-response detection
-- Evidence-ID normalization and deduplication
-
-### Security headers
-
-Validated headers include:
-
-```text
-X-Content-Type-Options
-Referrer-Policy
-X-Frame-Options
-Content-Security-Policy
-Permissions-Policy
-Cache-Control
-```
-
-The middleware tests also confirm:
-
-- The next middleware executes.
-- Existing response headers are not overwritten.
-
-## Frontend test coverage
-
-### Request form
-
-Validated behavior includes:
+Component tests cover:
 
 - Short-description validation
-- Valid submission
+- Valid form submission
 - Busy-state disabling
-
-### Markdown renderer
-
-Validated behavior includes:
-
-- Headings
-- Lists
-- Evidence citation conversion
-- Bracketed evidence IDs
-- Unbracketed evidence IDs
-- Empty responses
-- Partial streaming Markdown
+- Markdown headings
+- Markdown lists
+- Evidence citation transformation
+- Streaming Markdown fragments
+- Evidence extraction
 - Evidence badge activation
 - Evidence-card focus
+- Mock-evidence disclosure
+- Evidence warning content
 
-### Evidence parser and panel
-
-Validated behavior includes:
-
-- Unique evidence extraction
-- Empty-input handling
-- Markdown evidence-link creation
-- Evidence URL recognition
-- Unrelated text preservation
-- Multiple evidence cards
-- Empty evidence panel
-- Mock-evidence labels
-- Demonstration-data warning
-
-## Manual end-to-end matrix
-
-| Scenario | Expected result | Status |
-|---|---|---:|
-| Valid investigation | HTTP 202, stream, completed response | Passed |
-| Short input | Client validation | Passed |
-| Null-byte input | HTTP 400 | Passed |
-| AI service failure | Safe error and retry control | Passed |
-| Retry | Attempt 2 linked to attempt 1 | Passed |
-| Request history | History survives API restart | Passed |
-| Evidence citation | Evidence IDs shown as badges | Passed |
-| Evidence navigation | Matching evidence card receives focus | Passed |
-| Correlation ID | Header and body values match | Passed |
-| Invalid correlation ID | Unsafe input replaced | Passed |
-| Security headers | Required headers present | Passed |
-| Foundry execution | Real model response streamed | Passed |
-| Tool invocation | Deployment tool invoked | Passed |
-| Persistence | SQLite history retained | Passed |
-| OpenTelemetry | Agent and tool metrics emitted | Passed |
-
-## Successful investigation evidence
-
-### Input
+Vitest is restricted to:
 
 ```text
-Checkout failures increased after the latest PaymentService deployment.
-Investigate whether a recent deployment could be related.
+src/**/*.test.ts
+src/**/*.test.tsx
+src/**/*.spec.ts
+src/**/*.spec.tsx
 ```
 
-### Configuration
+Playwright files under `e2e/` are excluded from Vitest discovery.
+
+## Browser E2E tests
 
 ```text
-Environment: Development
-Severity: High
-Simulate AI service failure: unchecked
+Framework: Playwright
+Browser: Chromium
+Workers: 1
+Test files: 5
+Total: 5
+Passed: 5
+Failed: 0
 ```
 
-### Expected event sequence
+The E2E suite automatically starts:
 
 ```text
-agent.started
-agent.progress
-agent.message.delta
-agent.completed
+ASP.NET Core API on port 7001
+Vite frontend on port 5173
+Mock agent provider
+Isolated SQLite database
 ```
 
-### Expected evidence
+### Successful investigation
+
+The browser test verifies:
+
+1. The application loads.
+2. The incident form is completed.
+3. The request is submitted.
+4. The Mock agent streams a response.
+5. The persisted request becomes `Completed`.
+6. History is refreshed.
+7. Attempt 1 is visible.
+8. Evidence identifier `DEP-EV-001` is rendered.
+
+### Invalid input
+
+The browser test verifies:
+
+1. `Failure` is entered.
+2. Client validation displays the minimum-length message.
+3. The form keeps the input value.
+4. No new history record is created.
+5. The submit button remains usable.
+
+### Failure and retry
+
+The browser test verifies:
+
+1. AI failure simulation is enabled.
+2. The Mock agent throws the deterministic failure.
+3. Attempt 1 becomes `Failed`.
+4. `AGENT_SERVICE_UNAVAILABLE` is persisted.
+5. Retry is available.
+6. Retry creates attempt 2.
+7. Attempt 2 becomes `Completed`.
+8. Attempt 1 remains visible.
+
+The failure log is expected because the scenario deliberately simulates an unavailable AI service.
+
+### Evidence navigation
+
+The browser test verifies:
+
+1. Mock evidence citations are rendered.
+2. `DEP-EV-001` is an accessible button.
+3. Selecting the citation navigates to the matching evidence card.
+4. The card receives keyboard focus.
+5. The card identifies mock deployment evidence.
+6. The card identifies demonstration-only trust.
+7. The production-verification warning is visible.
+
+### Persistent history
+
+The browser test verifies:
+
+1. A request completes.
+2. The request is persisted.
+3. The browser page is reloaded.
+4. The history record remains visible.
+5. The status remains `Completed`.
+6. Attempt 1 remains visible.
+
+## SSE reliability improvement
+
+Browser E2E testing exposed two stream-integration concerns:
+
+- ASP.NET Core may use CRLF line endings.
+- The API may return a stream URL that differs from the browser origin.
+
+The frontend now:
+
+- Normalizes CRLF to LF before splitting SSE blocks.
+- Processes a final event without a trailing blank line.
+- Verifies `text/event-stream`.
+- Routes development stream requests through the same-origin `/api` proxy.
+- Uses `cache: "no-store"` for stream requests.
+
+## Persistence isolation
+
+Each Playwright process creates a database named similarly to:
 
 ```text
-DEP-EV-001
-DEP-EV-002
+agentops-e2e-<process-id>.db
 ```
 
-### Expected persisted state
+The database is stored under the ignored `App_Data` directory.
 
-```text
-Status: Completed
-Retryable: false
-Attempt number: 1
-Response: populated
-CreatedAt: populated
-CompletedAt: populated
-```
+Each API integration factory also creates an isolated temporary SQLite database.
 
-## Invalid-input evidence
+## Dependency audits
 
-### Client-side validation
-
-Input:
-
-```text
-Failure
-```
-
-Expected:
-
-```text
-Validation message displayed
-No request submitted
-```
-
-### API null-byte validation
-
-```powershell
-$body = @{
-  message = "Invalid`0incident description"
-  environment = "Development"
-  severity = "High"
-  simulateFailure = $false
-} | ConvertTo-Json
-```
-
-Expected:
-
-```text
-HTTP 400
-INCIDENT_DESCRIPTION_NULL_BYTE
-```
-
-## Failure and retry evidence
-
-### Failure
-
-```text
-Status: Failed
-Error code: AGENT_SERVICE_UNAVAILABLE
-Retryable: true
-Attempt number: 1
-```
-
-### Retry
-
-```text
-Status: Completed
-Attempt number: 2
-RetriedFromRequestId: original request ID
-```
-
-The original failed attempt remains available.
-
-## Persistence evidence
-
-Persistence was verified using this process:
-
-1. Submit an investigation.
-2. Wait for completion or failure.
-3. Confirm the record appears in history.
-4. Stop the API.
-5. Restart the API.
-6. Refresh the browser.
-7. Confirm that the record remains visible.
-
-Health output confirmed:
-
-```text
-status: Healthy
-persistence: SQLite
-databaseAvailable: True
-```
-
-## Correlation-ID evidence
-
-### Generated ID
-
-```powershell
-$response = Invoke-WebRequest `
-  -UseBasicParsing `
-  -Uri "http://localhost:7001/health"
-
-$response.Headers["X-Correlation-ID"]
-```
-
-Example result:
-
-```text
-cebfce453ebb4c37a8dae83eaee7e545
-```
-
-### Preserved caller ID
-
-```powershell
-$response = Invoke-WebRequest `
-  -UseBasicParsing `
-  -Uri "http://localhost:7001/health" `
-  -Headers @{
-    "X-Correlation-ID" = "agentops-test-001"
-  }
-
-$response.Headers["X-Correlation-ID"]
-```
-
-Expected:
-
-```text
-agentops-test-001
-```
-
-### Invalid ID replacement
-
-Input:
-
-```text
-invalid correlation id!
-```
-
-Example generated result:
-
-```text
-52a75dda20b74b17a21ea7bc54e94d1f
-```
-
-## OpenTelemetry evidence
-
-Observed agent metrics:
-
-```text
-Metric: agentops.investigations
-Provider: MicrosoftFoundry
-Status: completed
-Count: 1
-```
-
-```text
-Metric: agentops.investigation.duration
-Observed duration: approximately 28,521 ms
-```
-
-Observed tool metrics:
-
-```text
-Metric: agentops.tool.invocations
-Tool: GetRecentDeployments
-Status: completed
-Count: 1
-```
-
-```text
-Metric: agentops.tool.duration
-Observed duration: approximately 2.76 ms
-```
-
-```text
-Metric: agentops.tool.evidence.count
-Evidence count: 2
-```
-
-These figures are sample local observations and are not performance guarantees.
-
-## Security-header evidence
-
-Validated values include:
-
-```text
-X-Content-Type-Options: nosniff
-Referrer-Policy: no-referrer
-X-Frame-Options: DENY
-Content-Security-Policy: default-src 'none'; ...
-Permissions-Policy: camera=(), microphone=(), ...
-Cache-Control: no-store, no-cache, must-revalidate
-X-Correlation-ID: generated or preserved value
-```
-
-## GitHub Actions evidence
-
-The CI workflow validates:
-
-### Backend
-
-```text
-Repository-local .NET tool restore
-Solution restore
-Release build
-xUnit tests
-NuGet vulnerability audit
-EF Core migration verification
-Test-result artifact upload
-```
-
-### Frontend
-
-```text
-Node.js setup
-Lockfile validation
-npm ci
-Production dependency audit
-Development dependency report
-Vitest tests
-Vite production build
-Build artifact upload
-```
-
-### Final gate
-
-```text
-Backend result: success
-Frontend result: success
-AgentOps Nexus CI completed successfully
-```
-
-## Planned screenshots
-
-The following files will be captured with credentials and personal information removed:
-
-```text
-docs/images/successful-investigation.png
-docs/images/invalid-input.png
-docs/images/service-failure.png
-docs/images/retry-success.png
-docs/images/evidence-navigation.png
-docs/images/persisted-history.png
-docs/images/backend-tests.png
-docs/images/frontend-tests.png
-docs/images/github-actions.png
-```
-
-Until the files are present, the screenshots are planned evidence rather than completed evidence.
-
-## Final validation commands
-
-### Backend
-
-```powershell
-cd C:\Workspace\AgentOpsNexus
-
-dotnet restore .\AgentOpsNexus.slnx
-dotnet build .\AgentOpsNexus.slnx
-dotnet test .\AgentOpsNexus.slnx --no-build
-```
-
-### NuGet audit
+### NuGet
 
 ```powershell
 dotnet list `
@@ -529,25 +313,58 @@ dotnet list `
   --include-transitive
 ```
 
-### Frontend
-
-```powershell
-cd C:\Workspace\AgentOpsNexus\frontend\shell
-
-npm ci
-npm audit --omit=dev
-npm run test
-npm run build
-```
-
-## Planned automated E2E evidence
-
-The next milestone will add:
+Validated result:
 
 ```text
-ASP.NET Core WebApplicationFactory integration tests
-Temporary SQLite integration database
-Automated SSE validation
-Playwright browser E2E tests
-GitHub Actions E2E job
+AgentOpsNexus.AgentApi: no vulnerable packages
+AgentOpsNexus.AgentApi.UnitTests: no vulnerable packages
+AgentOpsNexus.AgentApi.IntegrationTests: no vulnerable packages
+```
+
+### npm production dependencies
+
+```powershell
+npm audit --omit=dev
+```
+
+Validated result:
+
+```text
+found 0 vulnerabilities
+```
+
+## Full validation commands
+
+```powershell
+cd C:\Workspace\AgentOpsNexus
+
+dotnet build .\AgentOpsNexus.slnx
+
+dotnet test `
+  .\AgentOpsNexus.slnx `
+  --no-build
+
+dotnet list `
+  .\AgentOpsNexus.slnx `
+  package `
+  --vulnerable `
+  --include-transitive
+
+cd .\frontend\shell
+
+npm run test
+npm run build
+npm run test:e2e
+npm audit --omit=dev
+```
+
+## Final result
+
+```text
+Backend: 83 of 83 tests passed
+Frontend components: 18 of 18 tests passed
+Browser E2E: 5 of 5 tests passed
+NuGet audit: clean
+npm production audit: clean
+Production frontend build: succeeded
 ```

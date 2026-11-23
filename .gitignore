@@ -489,3 +489,8 @@ $RECYCLE.BIN/
 
 # Local Visual Studio Code settings
 .vscode/
+
+# Playwright E2E output
+frontend/shell/playwright-report/
+frontend/shell/test-results/
+frontend/shell/blob-report/

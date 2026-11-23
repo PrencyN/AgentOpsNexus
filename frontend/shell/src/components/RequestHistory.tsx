@@ -4,20 +4,27 @@ import {
   CardHeader,
   Text,
 } from "@fluentui/react-components";
-import type { RequestDetails } from "../types/agent";
+
+import type {
+  RequestDetails,
+} from "../types/agent";
 
 interface RequestHistoryProps {
   requests: RequestDetails[];
   loading: boolean;
 }
 
-function badgeAppearance(status: string) {
+function badgeAppearance(
+  status: string,
+): "filled" | "outline" | "tint" {
   switch (status) {
     case "Completed":
       return "filled";
+
     case "Failed":
     case "Cancelled":
       return "outline";
+
     default:
       return "tint";
   }
@@ -28,18 +35,44 @@ export function RequestHistory({
   loading,
 }: RequestHistoryProps) {
   return (
-    <section>
-      <h2>Request history</h2>
+    <section
+      aria-labelledby="request-history-list-title"
+    >
+      <h2
+        id="request-history-list-title"
+        className="visually-hidden"
+      >
+        Request history records
+      </h2>
 
-      {loading && <Text>Loading request history...</Text>}
-
-      {!loading && requests.length === 0 && (
-        <Text>No requests have been submitted.</Text>
+      {loading && (
+        <Text role="status">
+          Loading request history...
+        </Text>
       )}
 
-      <div className="history-list">
+      {!loading &&
+        requests.length === 0 && (
+          <Text>
+            No requests have been submitted.
+          </Text>
+        )}
+
+      <div
+        className="history-list"
+        aria-live="polite"
+      >
         {requests.map((request) => (
-          <Card key={request.requestId}>
+          <Card
+            key={request.requestId}
+            aria-label={
+              `${request.message}. ` +
+              `${request.environment}. ` +
+              `${request.severity}. ` +
+              `Attempt ${request.attemptNumber}. ` +
+              `Status ${request.status}.`
+            }
+          >
             <CardHeader
               header={
                 <Text weight="semibold">
@@ -48,13 +81,18 @@ export function RequestHistory({
               }
               description={
                 <Text>
-                  {request.environment} · {request.severity} ·
+                  {request.environment}
+                  {" | "}
+                  {request.severity}
+                  {" | "}
                   Attempt {request.attemptNumber}
                 </Text>
               }
               action={
                 <Badge
-                  appearance={badgeAppearance(request.status)}
+                  appearance={badgeAppearance(
+                    request.status,
+                  )}
                 >
                   {request.status}
                 </Badge>
@@ -62,8 +100,20 @@ export function RequestHistory({
             />
 
             {request.errorCode && (
-              <Text className="error-code">
+              <Text
+                className="error-code"
+                aria-label={
+                  `Error code ${request.errorCode}`
+                }
+              >
                 {request.errorCode}
+              </Text>
+            )}
+
+            {request.retriedFromRequestId && (
+              <Text className="retry-reference">
+                Retried from request{" "}
+                {request.retriedFromRequestId}
               </Text>
             )}
           </Card>
