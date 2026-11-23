@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AgentOpsNexus.AgentApi.Agents;
 using AgentOpsNexus.AgentApi.Contracts;
 using AgentOpsNexus.AgentApi.Domain;
@@ -654,10 +654,11 @@ public sealed class AgentRequestsController
             request.Retryable,
             request.AttemptNumber,
             request.RetriedFromRequestId,
+            request.OwnerSubjectId,
+            request.OwnerDisplayName,
             request.CreatedAt,
             request.CompletedAt);
     }
-
     private ProblemDetails CreateProblem(
         int status,
         string code,
