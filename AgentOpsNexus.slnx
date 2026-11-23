@@ -3,6 +3,7 @@
     <Project Path="services/AgentOpsNexus.AgentApi/AgentOpsNexus.AgentApi.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AgentOpsNexus.AgentApi.IntegrationTests/AgentOpsNexus.AgentApi.IntegrationTests.csproj" />
     <Project Path="tests/AgentOpsNexus.AgentApi.UnitTests/AgentOpsNexus.AgentApi.UnitTests.csproj" />
   </Folder>
 </Solution>
