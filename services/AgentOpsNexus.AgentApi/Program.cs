@@ -58,6 +58,16 @@ builder.Services
         builder.Environment);
 
 /*
+ * Authenticated user and ownership resolution.
+ */
+builder.Services.AddHttpContextAccessor();
+
+builder.Services.AddScoped<
+    ICurrentUserAccessor,
+    HttpContextCurrentUserAccessor>();
+
+
+/*
  * Agent configuration validation.
  */
 builder.Services

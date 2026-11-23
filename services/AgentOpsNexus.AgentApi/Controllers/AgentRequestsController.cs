@@ -28,6 +28,9 @@ public sealed class AgentRequestsController
     private readonly IncidentInputPolicy
         _inputPolicy;
 
+    private readonly ICurrentUserAccessor
+        _currentUserAccessor;
+
     private readonly ILogger<
         AgentRequestsController>
         _logger;
@@ -36,6 +39,7 @@ public sealed class AgentRequestsController
         IAgentRequestRepository repository,
         IIncidentAgent agent,
         IncidentInputPolicy inputPolicy,
+        ICurrentUserAccessor currentUserAccessor,
         ILogger<AgentRequestsController> logger)
     {
         _repository =
@@ -46,6 +50,9 @@ public sealed class AgentRequestsController
 
         _inputPolicy =
             inputPolicy;
+
+        _currentUserAccessor =
+            currentUserAccessor;
 
         _logger =
             logger;
@@ -109,8 +116,9 @@ public sealed class AgentRequestsController
                 problem);
         }
 
-        var correlationId =
-            HttpContext.TraceIdentifier;
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
 
         var record =
             new AgentRequestRecord(
@@ -133,7 +141,13 @@ public sealed class AgentRequestsController
                     DateTimeOffset.UtcNow,
 
                 correlationId:
-                    correlationId);
+                    HttpContext.TraceIdentifier,
+
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                ownerDisplayName:
+                    currentUser.DisplayName);
 
         await _repository.AddAsync(
             record,
@@ -183,8 +197,18 @@ public sealed class AgentRequestsController
         GetAll(
             CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var requests =
             await _repository.GetAllAsync(
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         var response =
@@ -216,31 +240,26 @@ public sealed class AgentRequestsController
             Guid requestId,
             CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var request =
             await _repository.GetAsync(
                 requestId,
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         if (request is null)
         {
             return NotFound(
-                CreateProblem(
-                    status:
-                        StatusCodes
-                            .Status404NotFound,
-
-                    code:
-                        "REQUEST_NOT_FOUND",
-
-                    title:
-                        "Request not found",
-
-                    detail:
-                        $"No request exists with ID " +
-                        $"{requestId}.",
-
-                    retryable:
-                        false));
+                CreateRequestNotFoundProblem(
+                    requestId));
         }
 
         return Ok(
@@ -273,31 +292,26 @@ public sealed class AgentRequestsController
             Guid requestId,
             CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var original =
             await _repository.GetAsync(
                 requestId,
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         if (original is null)
         {
             return NotFound(
-                CreateProblem(
-                    status:
-                        StatusCodes
-                            .Status404NotFound,
-
-                    code:
-                        "REQUEST_NOT_FOUND",
-
-                    title:
-                        "Request not found",
-
-                    detail:
-                        $"No request exists with ID " +
-                        $"{requestId}.",
-
-                    retryable:
-                        false));
+                CreateRequestNotFoundProblem(
+                    requestId));
         }
 
         if (!original.Retryable)
@@ -325,7 +339,7 @@ public sealed class AgentRequestsController
 
         /*
          * The persisted message already passed the
-         * IncidentInputPolicy during the original
+         * incident-input policy during the original
          * request. Re-evaluate it as defense in depth.
          */
         var policyResult =
@@ -359,6 +373,12 @@ public sealed class AgentRequestsController
                         false));
         }
 
+        /*
+         * Preserve the original ownership.
+         *
+         * This remains true when an administrator
+         * retries another user's failed request.
+         */
         var retry =
             new AgentRequestRecord(
                 id:
@@ -386,7 +406,13 @@ public sealed class AgentRequestsController
                     DateTimeOffset.UtcNow,
 
                 correlationId:
-                    HttpContext.TraceIdentifier);
+                    HttpContext.TraceIdentifier,
+
+                ownerSubjectId:
+                    original.OwnerSubjectId,
+
+                ownerDisplayName:
+                    original.OwnerDisplayName);
 
         await _repository.AddAsync(
             retry,
@@ -436,9 +462,19 @@ public sealed class AgentRequestsController
         Guid requestId,
         CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var request =
             await _repository.GetAsync(
                 requestId,
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         if (request is null)
@@ -448,24 +484,8 @@ public sealed class AgentRequestsController
                     .Status404NotFound;
 
             await Response.WriteAsJsonAsync(
-                CreateProblem(
-                    status:
-                        StatusCodes
-                            .Status404NotFound,
-
-                    code:
-                        "REQUEST_NOT_FOUND",
-
-                    title:
-                        "Request not found",
-
-                    detail:
-                        $"No request exists with ID " +
-                        $"{requestId}.",
-
-                    retryable:
-                        false),
-
+                CreateRequestNotFoundProblem(
+                    requestId),
                 cancellationToken);
 
             return;
@@ -496,7 +516,6 @@ public sealed class AgentRequestsController
 
                     retryable:
                         false),
-
                 cancellationToken);
 
             return;
@@ -659,6 +678,35 @@ public sealed class AgentRequestsController
             request.CreatedAt,
             request.CompletedAt);
     }
+
+    private ProblemDetails
+        CreateRequestNotFoundProblem(
+            Guid requestId)
+    {
+        /*
+         * This response is used both for unknown IDs
+         * and records owned by another user. Returning
+         * the same 404 prevents resource enumeration.
+         */
+        return CreateProblem(
+            status:
+                StatusCodes
+                    .Status404NotFound,
+
+            code:
+                "REQUEST_NOT_FOUND",
+
+            title:
+                "Request not found",
+
+            detail:
+                $"No request exists with ID " +
+                $"{requestId}.",
+
+            retryable:
+                false);
+    }
+
     private ProblemDetails CreateProblem(
         int status,
         string code,
