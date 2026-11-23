@@ -18,6 +18,8 @@
     "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.30.0",
+    "@azure/msal-react": "^5.8.3",
     "@fluentui/react-components": "^9.75.2",
     "@fluentui/react-icons": "2.0.346",
     "@hookform/resolvers": "7.0.7",
