@@ -18,27 +18,21 @@ public sealed class
             CreateValidator(
                 environmentName:
                     Environments.Development,
-
                 authenticationEnabled:
                     false,
-
                 agentProvider:
                     "Mock",
-
-                connectionString:
-                    "Data Source=App_Data/agentops.db");
+                persistenceProvider:
+                    PersistenceOptions
+                        .SqliteProvider);
 
         var options =
             new ProductionOptions
             {
                 AllowedOrigins =
                     [],
-
                 ApplyDatabaseMigrations =
-                    true,
-
-                AllowSqlite =
-                    false
+                    true
             };
 
         var result =
@@ -114,21 +108,47 @@ public sealed class
 
     [Fact]
     public void
-        Production_EmptyOrigins_IsRejected()
+        Production_SqliteProvider_IsRejected()
     {
         var validator =
-            CreateValidator();
-
-        var options =
-            CreateValidOptions(
-                allowedOrigins:
-                    []);
+            CreateValidator(
+                persistenceProvider:
+                    PersistenceOptions
+                        .SqliteProvider);
 
         var result =
             validator.Validate(
                 name:
                     null,
-                options);
+                CreateValidOptions());
+
+        result.Failed
+            .Should()
+            .BeTrue();
+
+        GetFailures(result)
+            .Should()
+            .Contain(
+                failure =>
+                    failure.Contains(
+                        "Persistence:Provider=SqlServer",
+                        StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void
+        Production_EmptyOrigins_IsRejected()
+    {
+        var validator =
+            CreateValidator();
+
+        var result =
+            validator.Validate(
+                name:
+                    null,
+                CreateValidOptions(
+                    allowedOrigins:
+                        []));
 
         result.Failed
             .Should()
@@ -140,7 +160,8 @@ public sealed class
                 failure =>
                     failure.Contains(
                         "at least one",
-                        StringComparison.OrdinalIgnoreCase)
+                        StringComparison
+                            .OrdinalIgnoreCase)
                     &&
                     failure.Contains(
                         "AllowedOrigins",
@@ -154,18 +175,15 @@ public sealed class
         var validator =
             CreateValidator();
 
-        var options =
-            CreateValidOptions(
-                allowedOrigins:
-                    [
-                        "not-an-origin"
-                    ]);
-
         var result =
             validator.Validate(
                 name:
                     null,
-                options);
+                CreateValidOptions(
+                    allowedOrigins:
+                        [
+                            "not-an-origin"
+                        ]));
 
         result.Failed
             .Should()
@@ -187,20 +205,17 @@ public sealed class
         var validator =
             CreateValidator();
 
-        var options =
-            CreateValidOptions(
-                allowedOrigins:
-                    [
-                        CreateHttpsUri(
-                            "agentops.example.com",
-                            "/application")
-                    ]);
-
         var result =
             validator.Validate(
                 name:
                     null,
-                options);
+                CreateValidOptions(
+                    allowedOrigins:
+                        [
+                            CreateHttpsUri(
+                                "agentops.example.com",
+                                "/application")
+                        ]));
 
         result.Failed
             .Should()
@@ -222,19 +237,16 @@ public sealed class
         var validator =
             CreateValidator();
 
-        var options =
-            CreateValidOptions(
-                allowedOrigins:
-                    [
-                        CreateHttpUri(
-                            "agentops.example.com")
-                    ]);
-
         var result =
             validator.Validate(
                 name:
                     null,
-                options);
+                CreateValidOptions(
+                    allowedOrigins:
+                        [
+                            CreateHttpUri(
+                                "agentops.example.com")
+                        ]));
 
         result.Failed
             .Should()
@@ -251,12 +263,10 @@ public sealed class
 
     [Fact]
     public void
-        Production_SqliteWhenNotAllowed_IsRejected()
+        Production_AutomaticMigrations_IsRejected()
     {
         var validator =
-            CreateValidator(
-                connectionString:
-                    "Data Source=/data/agentops.db");
+            CreateValidator();
 
         var options =
             new ProductionOptions
@@ -266,12 +276,8 @@ public sealed class
                         CreateHttpsUri(
                             "agentops.example.com")
                     ],
-
                 ApplyDatabaseMigrations =
-                    false,
-
-                AllowSqlite =
-                    false
+                    true
             };
 
         var result =
@@ -289,17 +295,13 @@ public sealed class
             .Contain(
                 failure =>
                     failure.Contains(
-                        "SQLite",
-                        StringComparison.Ordinal)
-                    &&
-                    failure.Contains(
-                        "AllowSqlite",
+                        "ApplyDatabaseMigrations=false",
                         StringComparison.Ordinal));
     }
 
     [Fact]
     public void
-        Production_ValidExplicitConfiguration_IsAccepted()
+        Production_ValidConfiguration_IsAccepted()
     {
         var validator =
             CreateValidator();
@@ -321,66 +323,25 @@ public sealed class
 
     [Fact]
     public void
-        Production_ExplicitSqliteAcceptance_IsAccepted()
-    {
-        var validator =
-            CreateValidator(
-                connectionString:
-                    "Data Source=/data/agentops.db");
-
-        var options =
-            new ProductionOptions
-            {
-                AllowedOrigins =
-                    [
-                        CreateHttpsUri(
-                            "agentops.example.com")
-                    ],
-
-                ApplyDatabaseMigrations =
-                    false,
-
-                AllowSqlite =
-                    true
-            };
-
-        var result =
-            validator.Validate(
-                name:
-                    null,
-                options);
-
-        result.Succeeded
-            .Should()
-            .BeTrue();
-    }
-
-    [Fact]
-    public void
         Production_MultipleFailures_AreReturnedTogether()
     {
         var validator =
             CreateValidator(
                 authenticationEnabled:
                     false,
-
                 agentProvider:
                     "Mock",
-
-                connectionString:
-                    "Data Source=/data/agentops.db");
+                persistenceProvider:
+                    PersistenceOptions
+                        .SqliteProvider);
 
         var options =
             new ProductionOptions
             {
                 AllowedOrigins =
                     [],
-
                 ApplyDatabaseMigrations =
-                    true,
-
-                AllowSqlite =
-                    false
+                    true
             };
 
         var result =
@@ -395,7 +356,47 @@ public sealed class
 
         GetFailures(result)
             .Should()
-            .HaveCount(4);
+            .HaveCount(5);
+
+        GetFailures(result)
+            .Should()
+            .Contain(
+                failure =>
+                    failure.Contains(
+                        "Authentication",
+                        StringComparison.Ordinal));
+
+        GetFailures(result)
+            .Should()
+            .Contain(
+                failure =>
+                    failure.Contains(
+                        "Foundry",
+                        StringComparison.Ordinal));
+
+        GetFailures(result)
+            .Should()
+            .Contain(
+                failure =>
+                    failure.Contains(
+                        "SqlServer",
+                        StringComparison.Ordinal));
+
+        GetFailures(result)
+            .Should()
+            .Contain(
+                failure =>
+                    failure.Contains(
+                        "AllowedOrigins",
+                        StringComparison.Ordinal));
+
+        GetFailures(result)
+            .Should()
+            .Contain(
+                failure =>
+                    failure.Contains(
+                        "ApplyDatabaseMigrations",
+                        StringComparison.Ordinal));
     }
 
     private static
@@ -407,9 +408,9 @@ public sealed class
                 true,
             string agentProvider =
                 "Foundry",
-            string connectionString =
-                "Server=tcp:agentops.database." +
-                "windows.net;Database=AgentOps;")
+            string persistenceProvider =
+                PersistenceOptions
+                    .SqlServerProvider)
     {
         var configurationValues =
             new Dictionary<
@@ -423,9 +424,8 @@ public sealed class
                 ["Agent:Provider"] =
                     agentProvider,
 
-                ["ConnectionStrings:" +
-                 "AgentOpsDatabase"] =
-                    connectionString
+                ["Persistence:Provider"] =
+                    persistenceProvider
             };
 
         var configuration =
@@ -456,17 +456,13 @@ public sealed class
         return new ProductionOptions
         {
             AllowedOrigins =
-                allowedOrigins
-                ??
+                allowedOrigins ??
                 [
                     CreateHttpsUri(
                         "agentops.example.com")
                 ],
 
             ApplyDatabaseMigrations =
-                false,
-
-            AllowSqlite =
                 false
         };
     }
@@ -508,19 +504,22 @@ public sealed class
         {
             get;
             set;
-        } = Environments.Production;
+        } =
+            Environments.Production;
 
         public string ApplicationName
         {
             get;
             set;
-        } = "AgentOpsNexus.Tests";
+        } =
+            "AgentOpsNexus.Tests";
 
         public string ContentRootPath
         {
             get;
             set;
-        } = AppContext.BaseDirectory;
+        } =
+            AppContext.BaseDirectory;
 
         public IFileProvider
             ContentRootFileProvider

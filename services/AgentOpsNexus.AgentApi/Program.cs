@@ -181,28 +181,90 @@ builder.Services.Configure<ApiBehaviorOptions>(
     });
 
 /*
- * SQLite persistence.
+ * Persistence configuration.
+ *
+ * Development and Testing use SQLite.
+ * Production uses SQL Server.
  */
+builder.Services
+    .AddOptions<PersistenceOptions>()
+    .Bind(
+        builder.Configuration.GetSection(
+            PersistenceOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<
+    IValidateOptions<PersistenceOptions>,
+    PersistenceOptionsValidator>();
+
+var persistenceOptions =
+    builder.Configuration
+        .GetSection(
+            PersistenceOptions.SectionName)
+        .Get<PersistenceOptions>()
+    ??
+    new PersistenceOptions();
+
 var connectionString =
     builder.Configuration.GetConnectionString(
-        "AgentOpsDatabase")
-    ??
-    "Data Source=App_Data/agentops.db";
+        persistenceOptions
+            .ConnectionStringName);
 
-var databaseDirectory =
-    Path.Combine(
-        builder.Environment.ContentRootPath,
-        "App_Data");
+if (string.IsNullOrWhiteSpace(
+        connectionString))
+{
+    throw new InvalidOperationException(
+        "Persistence connection string " +
+        $"'{persistenceOptions.ConnectionStringName}' " +
+        "is not configured.");
+}
 
-Directory.CreateDirectory(
-    databaseDirectory);
+if (persistenceOptions.IsSqlite)
+{
+    var databaseDirectory =
+        Path.Combine(
+            builder.Environment.ContentRootPath,
+            "App_Data");
+
+    Directory.CreateDirectory(
+        databaseDirectory);
+}
 
 builder.Services.AddDbContext<
     AgentOpsDbContext>(
         options =>
         {
-            options.UseSqlite(
-                connectionString);
+            if (persistenceOptions.IsSqlite)
+            {
+                options.UseSqlite(
+                    connectionString);
+            }
+            else if (persistenceOptions.IsSqlServer)
+            {
+                options.UseSqlServer(
+                    connectionString,
+                    sqlServerOptions =>
+                    {
+                        sqlServerOptions
+                            .EnableRetryOnFailure(
+                                maxRetryCount:
+                                    5,
+
+                                maxRetryDelay:
+                                    TimeSpan
+                                        .FromSeconds(30),
+
+                                errorNumbersToAdd:
+                                    null);
+                    });
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    "Unsupported persistence provider " +
+                    $"'{persistenceOptions.Provider}'.");
+            }
 
             if (builder.Environment
                 .IsDevelopment())
@@ -211,14 +273,12 @@ builder.Services.AddDbContext<
             }
 
             /*
-             * Sensitive-data logging is deliberately
-             * disabled. Prompts, responses, secrets,
-             * endpoints, and tenant IDs must not appear
-             * in EF diagnostic logs.
+             * Sensitive-data logging remains disabled.
+             * Prompts, responses, identities, secrets,
+             * endpoints, and connection strings must not
+             * appear in EF diagnostic logs.
              */
         });
-
-
 
 /*
  * Health checks.

@@ -41,22 +41,21 @@ public sealed class ProductionOptionsValidator
         ValidateAgentProvider(
             failures);
 
+        ValidatePersistenceProvider(
+            failures);
+
         ValidateOrigins(
             options,
             failures);
 
-        ValidatePersistence(
+        ValidateMigrations(
             options,
             failures);
 
-        if (failures.Count == 0)
-        {
-            return ValidateOptionsResult
-                .Success;
-        }
-
-        return ValidateOptionsResult.Fail(
-            failures);
+        return failures.Count == 0
+            ? ValidateOptionsResult.Success
+            : ValidateOptionsResult.Fail(
+                failures);
     }
 
     private void ValidateAuthentication(
@@ -89,6 +88,24 @@ public sealed class ProductionOptionsValidator
             failures.Add(
                 "Production requires " +
                 "Agent:Provider=Foundry.");
+        }
+    }
+
+    private void ValidatePersistenceProvider(
+        ICollection<string> failures)
+    {
+        var provider =
+            _configuration[
+                "Persistence:Provider"];
+
+        if (!string.Equals(
+                provider,
+                PersistenceOptions.SqlServerProvider,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            failures.Add(
+                "Production requires " +
+                "Persistence:Provider=SqlServer.");
         }
     }
 
@@ -176,8 +193,12 @@ public sealed class ProductionOptionsValidator
             }
 
             if (
-                _environmentIsProductionHttp(
-                    originUri))
+                string.Equals(
+                    originUri.Scheme,
+                    Uri.UriSchemeHttp,
+                    StringComparison.OrdinalIgnoreCase)
+                &&
+                !originUri.IsLoopback)
             {
                 failures.Add(
                     $"Production origin '{origin}' " +
@@ -187,52 +208,18 @@ public sealed class ProductionOptionsValidator
         }
     }
 
-    private static bool
-        _environmentIsProductionHttp(
-            Uri originUri)
-    {
-        if (!string.Equals(
-                originUri.Scheme,
-                Uri.UriSchemeHttp,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return
-            !originUri.IsLoopback;
-    }
-
-    private void ValidatePersistence(
+    private static void ValidateMigrations(
         ProductionOptions options,
         ICollection<string> failures)
     {
-        var connectionString =
-            _configuration.GetConnectionString(
-                "AgentOpsDatabase")
-            ??
-            string.Empty;
-
-        var usesSqlite =
-            connectionString.Contains(
-                "Data Source=",
-                StringComparison.OrdinalIgnoreCase)
-            ||
-            connectionString.Contains(
-                "Filename=",
-                StringComparison.OrdinalIgnoreCase);
-
-        if (
-            usesSqlite &&
-            !options.AllowSqlite)
+        if (options.ApplyDatabaseMigrations)
         {
             failures.Add(
-                "Production is configured with " +
-                "SQLite, but " +
-                "Production:AllowSqlite is false. " +
-                "Use managed production persistence " +
-                "or explicitly accept the " +
-                "single-instance SQLite constraint.");
+                "Production requires " +
+                "Production:" +
+                "ApplyDatabaseMigrations=false. " +
+                "Database migrations must run as a " +
+                "controlled deployment step.");
         }
     }
 }

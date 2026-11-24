@@ -1,4 +1,5 @@
 using AgentOpsNexus.AgentApi.Data;
+using AgentOpsNexus.AgentApi.Configuration;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -65,6 +66,13 @@ public sealed class AgentApiWebApplicationFactory
 
                             ["Agent:TimeoutSeconds"] =
                                 "30",
+
+                            ["Persistence:Provider"] =
+                                PersistenceOptions.SqliteProvider,
+
+                            ["Persistence:ConnectionStringName"] =
+                                PersistenceOptions
+                                    .DefaultConnectionStringName,
 
                             /*
                              * Program.cs registers its

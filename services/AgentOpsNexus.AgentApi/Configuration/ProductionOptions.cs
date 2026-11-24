@@ -19,10 +19,4 @@ public sealed class ProductionOptions
         get;
         init;
     }
-
-    public bool AllowSqlite
-    {
-        get;
-        init;
-    }
 }
