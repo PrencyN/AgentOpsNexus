@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/services/">
+    <Project Path="services/AgentOpsNexus.AgentApi.SqlServerMigrations/AgentOpsNexus.AgentApi.SqlServerMigrations.csproj" />
     <Project Path="services/AgentOpsNexus.AgentApi/AgentOpsNexus.AgentApi.csproj" />
   </Folder>
   <Folder Name="/tests/">

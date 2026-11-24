@@ -246,6 +246,10 @@ builder.Services.AddDbContext<
                     connectionString,
                     sqlServerOptions =>
                     {
+                        sqlServerOptions.MigrationsAssembly(
+                            "AgentOpsNexus.AgentApi." +
+                            "SqlServerMigrations");
+
                         sqlServerOptions
                             .EnableRetryOnFailure(
                                 maxRetryCount:
