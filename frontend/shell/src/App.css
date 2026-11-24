@@ -765,3 +765,143 @@
     animation-iteration-count: 1 !important;
   }
 }
+/* =========================================================
+   AUTHENTICATION
+   ========================================================= */
+
+.auth-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  color: #ffffff;
+  background:
+    radial-gradient(
+      circle at 85% 0%,
+      rgba(67, 137, 255, 0.3),
+      transparent 30rem
+    ),
+    radial-gradient(
+      circle at 5% 80%,
+      rgba(18, 173, 141, 0.2),
+      transparent 28rem
+    ),
+    linear-gradient(
+      135deg,
+      #0e264d,
+      #144b7b 55%,
+      #107062
+    );
+}
+
+.auth-card {
+  display: flex;
+  width: min(480px, 100%);
+  padding: 32px;
+  flex-direction: column;
+  gap: 20px;
+  border:
+    1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 20px;
+  color: #ffffff;
+  background:
+    rgba(10, 32, 61, 0.88);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(18px);
+}
+
+.auth-card h1 {
+  margin: 0;
+  color: #ffffff;
+  font-size:
+    clamp(1.8rem, 5vw, 2.45rem);
+  line-height: 1.15;
+}
+
+.auth-card p {
+  margin: 0;
+  color:
+    rgba(255, 255, 255, 0.8);
+  line-height: 1.65;
+}
+
+.auth-error {
+  padding: 12px 14px;
+  border:
+    1px solid rgba(255, 140, 140, 0.5);
+  border-radius: 9px;
+  color: #ffe2e2;
+  background:
+    rgba(130, 20, 20, 0.35);
+}
+
+.app-header-account-row {
+  display: flex;
+  min-height: 42px;
+  justify-content: flex-end;
+  margin-bottom: 14px;
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 7px 9px 7px 14px;
+  border:
+    1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 12px;
+  background:
+    rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(8px);
+}
+
+.user-identity {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.user-name {
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.user-account {
+  max-width: 260px;
+  overflow: hidden;
+  color:
+    rgba(255, 255, 255, 0.7);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu button {
+  color: #ffffff;
+}
+
+@media (max-width: 720px) {
+  .app-header-account-row {
+    justify-content: stretch;
+  }
+
+  .user-menu {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .user-identity {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .user-account {
+    max-width: 190px;
+  }
+
+  .auth-card {
+    padding: 24px;
+  }
+}

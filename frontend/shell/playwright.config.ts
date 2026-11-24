@@ -2,21 +2,21 @@
   defineConfig,
   devices,
 } from "@playwright/test";
-
 import {
   dirname,
   resolve,
 } from "node:path";
-
 import {
   fileURLToPath,
 } from "node:url";
 
 const currentFilePath =
-  fileURLToPath(import.meta.url);
+  fileURLToPath(
+    import.meta.url);
 
 const currentDirectory =
-  dirname(currentFilePath);
+  dirname(
+    currentFilePath);
 
 const repositoryRoot =
   resolve(
@@ -58,22 +58,30 @@ const frontendUrl =
   ].join("");
 
 export default defineConfig({
-  testDir: "./e2e",
+  testDir:
+    "./e2e",
 
-  fullyParallel: false,
+  fullyParallel:
+    false,
 
-  workers: 1,
+  workers:
+    1,
 
   forbidOnly:
-    Boolean(process.env.CI),
+    Boolean(
+      process.env.CI),
 
   retries:
-    process.env.CI ? 2 : 0,
+    process.env.CI
+      ? 2
+      : 0,
 
-  timeout: 90_000,
+  timeout:
+    90_000,
 
   expect: {
-    timeout: 15_000,
+    timeout:
+      15_000,
   },
 
   reporter: [
@@ -83,7 +91,9 @@ export default defineConfig({
     [
       "html",
       {
-        open: "never",
+        open:
+          "never",
+
         outputFolder:
           "playwright-report",
       },
@@ -91,7 +101,8 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: frontendUrl,
+    baseURL:
+      frontendUrl,
 
     trace:
       "retain-on-failure",
@@ -102,7 +113,8 @@ export default defineConfig({
     video:
       "retain-on-failure",
 
-    actionTimeout: 15_000,
+    actionTimeout:
+      15_000,
 
     navigationTimeout:
       20_000,
@@ -110,7 +122,8 @@ export default defineConfig({
 
   projects: [
     {
-      name: "chromium",
+      name:
+        "chromium",
 
       use: {
         ...devices[
@@ -141,6 +154,9 @@ export default defineConfig({
         ASPNETCORE_ENVIRONMENT:
           "Testing",
 
+        Authentication__Enabled:
+          "false",
+
         Agent__Provider:
           "Mock",
 
@@ -151,29 +167,45 @@ export default defineConfig({
           `Data Source=${e2eDatabasePath}`,
       },
 
-      timeout: 120_000,
+      timeout:
+        120_000,
 
-      reuseExistingServer: false,
+      reuseExistingServer:
+        false,
 
-      stdout: "pipe",
+      stdout:
+        "pipe",
 
-      stderr: "pipe",
+      stderr:
+        "pipe",
     },
-
     {
       command:
-        "npm run dev -- --host 127.0.0.1",
+        "npm run dev -- " +
+        "--host 127.0.0.1 " +
+        "--mode e2e",
 
-      url: frontendUrl,
+      url:
+        frontendUrl,
 
-      timeout: 120_000,
+      env: {
+        ...process.env,
 
-      reuseExistingServer: false,
+        VITE_AUTH_ENABLED:
+          "false",
+      },
 
-      stdout: "pipe",
+      timeout:
+        120_000,
 
-      stderr: "pipe",
+      reuseExistingServer:
+        false,
+
+      stdout:
+        "pipe",
+
+      stderr:
+        "pipe",
     },
   ],
 });
-
