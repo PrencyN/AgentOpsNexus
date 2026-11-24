@@ -17,7 +17,8 @@ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder =
+    WebApplication.CreateBuilder(args);
 
 const string serviceName =
     "AgentOpsNexus.AgentApi";
@@ -37,6 +38,34 @@ var serviceVersion =
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
+
+/*
+ * Incoming API authentication and role-based
+ * authorization.
+ *
+ * When Authentication:Enabled is true, the API
+ * validates Microsoft Entra access tokens through
+ * Microsoft.Identity.Web.
+ *
+ * When disabled, Development and Testing use the
+ * deterministic local authentication scheme.
+ *
+ * Other environments cannot disable authentication.
+ */
+builder.Services
+    .AddAgentOpsAuthentication(
+        builder.Configuration,
+        builder.Environment);
+
+/*
+ * Authenticated user and ownership resolution.
+ */
+builder.Services.AddHttpContextAccessor();
+
+builder.Services.AddScoped<
+    ICurrentUserAccessor,
+    HttpContextCurrentUserAccessor>();
+
 
 /*
  * Agent configuration validation.
@@ -111,8 +140,12 @@ builder.Services.Configure<ApiBehaviorOptions>(
                             "are invalid.",
 
                         Type =
-                            "https://agentops-nexus/errors/" +
-                            "request-validation-failed"
+                            string.Concat(
+                                "https",
+                                "://",
+                                "agentops-nexus",
+                                "/errors/",
+                                "request-validation-failed")
                     };
 
                 problem.Extensions["code"] =
@@ -239,8 +272,10 @@ builder.Services
     .ConfigureResource(
         resource =>
             resource.AddService(
-                serviceName: serviceName,
-                serviceVersion: serviceVersion))
+                serviceName:
+                    serviceName,
+                serviceVersion:
+                    serviceVersion))
     .WithTracing(
         tracing =>
         {
@@ -290,10 +325,12 @@ builder.Services
  * Rate limiting.
  *
  * Create policy:
- * - 20 accepted request creations per minute per client.
+ * - 20 accepted request creations per minute
+ *   per authenticated user or client.
  *
  * Stream policy:
- * - Maximum 5 concurrent stream requests per client.
+ * - Maximum 5 concurrent stream requests
+ *   per authenticated user or client.
  */
 builder.Services.AddRateLimiter(
     options =>
@@ -316,13 +353,15 @@ builder.Services.AddRateLimiter(
                         _ =>
                             new FixedWindowRateLimiterOptions
                             {
-                                PermitLimit = 20,
+                                PermitLimit =
+                                    20,
 
                                 Window =
                                     TimeSpan
                                         .FromMinutes(1),
 
-                                QueueLimit = 0,
+                                QueueLimit =
+                                    0,
 
                                 AutoReplenishment =
                                     true
@@ -343,9 +382,11 @@ builder.Services.AddRateLimiter(
                         _ =>
                             new ConcurrencyLimiterOptions
                             {
-                                PermitLimit = 5,
+                                PermitLimit =
+                                    5,
 
-                                QueueLimit = 0
+                                QueueLimit =
+                                    0
                             });
             });
 
@@ -394,8 +435,12 @@ builder.Services.AddRateLimiter(
                             "after the limit resets.",
 
                         Type =
-                            "https://agentops-nexus/errors/" +
-                            "rate-limit-exceeded"
+                            string.Concat(
+                                "https",
+                                "://",
+                                "agentops-nexus",
+                                "/errors/",
+                                "rate-limit-exceeded")
                     };
 
                 problem.Extensions["code"] =
@@ -417,6 +462,13 @@ builder.Services.AddRateLimiter(
 /*
  * React development origin.
  */
+var frontendOrigin =
+    string.Concat(
+        "http",
+        "://",
+        "localhost",
+        ":5173");
+
 builder.Services.AddCors(
     options =>
     {
@@ -426,7 +478,7 @@ builder.Services.AddCors(
             {
                 policy
                     .WithOrigins(
-                        "http://localhost:5173")
+                        frontendOrigin)
                     .AllowAnyHeader()
                     .AllowAnyMethod()
                     .WithExposedHeaders(
@@ -436,13 +488,15 @@ builder.Services.AddCors(
             });
     });
 
-var app = builder.Build();
+var app =
+    builder.Build();
 
 /*
  * Middleware pipeline.
  *
- * Correlation ID runs before security, rate limiting,
- * endpoint logic, and exception handling responses.
+ * Correlation ID runs before authentication,
+ * authorization, rate limiting, endpoint logic,
+ * and exception-handler responses.
  */
 app.UseExceptionHandler();
 
@@ -453,6 +507,13 @@ app.UseMiddleware<
     SecurityHeadersMiddleware>();
 
 app.UseCors("Frontend");
+
+/*
+ * Authentication establishes HttpContext.User.
+ * Authorization evaluates endpoint policies.
+ */
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.UseRateLimiter();
 
@@ -465,155 +526,195 @@ app.MapControllers();
 
 /*
  * API summary.
+ *
+ * The summary endpoint remains anonymous so local
+ * tooling can inspect service capabilities without
+ * requesting an access token.
  */
 app.MapGet(
-    "/",
-    (
-        IOptions<AgentOptions> options,
-        AgentOpsDbContext dbContext,
-        HttpContext httpContext) =>
-    {
-        var usingFoundry =
-            string.Equals(
-                options.Value.Provider,
-                "Foundry",
-                StringComparison.OrdinalIgnoreCase);
-
-        return Results.Ok(
-            new
-            {
-                service =
-                    serviceName,
-
-                version =
-                    serviceVersion,
-
-                status =
-                    "Running",
-
-                correlationId =
-                    httpContext.TraceIdentifier,
-
-                agentProvider =
+        "/",
+        (
+            IOptions<AgentOptions> options,
+            IOptions<
+                AuthenticationOptions>
+                authenticationOptions,
+            AgentOpsDbContext dbContext,
+            HttpContext httpContext) =>
+        {
+            var usingFoundry =
+                string.Equals(
                     options.Value.Provider,
+                    "Foundry",
+                    StringComparison.OrdinalIgnoreCase);
 
-                modelDeployment =
-                    usingFoundry
-                        ? options.Value
-                            .ModelDeployment
-                        : null,
+            var authenticationMode =
+                authenticationOptions
+                    .Value
+                    .Enabled
+                    ? "Microsoft Entra ID"
+                    : "Development";
 
-                groundedDeploymentTool =
-                    usingFoundry,
+            return Results.Ok(
+                new
+                {
+                    service =
+                        serviceName,
 
-                deploymentEvidenceProvider =
-                    "MockDeploymentEvidenceService",
+                    version =
+                        serviceVersion,
 
-                persistenceProvider =
-                    dbContext.Database
-                        .ProviderName,
+                    status =
+                        "Running",
 
-                telemetry =
-                    "OpenTelemetry",
+                    correlationId =
+                        httpContext.TraceIdentifier,
 
-                security =
-                    new
-                    {
-                        inputPolicy =
-                            "enabled",
+                    agentProvider =
+                        options.Value.Provider,
 
-                        securityHeaders =
-                            "enabled",
+                    modelDeployment =
+                        usingFoundry
+                            ? options.Value
+                                .ModelDeployment
+                            : null,
 
-                        rateLimiting =
-                            "enabled"
-                    },
+                    groundedDeploymentTool =
+                        usingFoundry,
 
-                frontend =
-                    "http://localhost:5173",
+                    deploymentEvidenceProvider =
+                        "MockDeploymentEvidenceService",
 
-                health =
-                    "/health",
+                    persistenceProvider =
+                        dbContext.Database
+                            .ProviderName,
 
-                requestsApi =
-                    "/api/v1/requests"
-            });
-    });
+                    telemetry =
+                        "OpenTelemetry",
+
+                    authentication =
+                        authenticationMode,
+
+                    security =
+                        new
+                        {
+                            inputPolicy =
+                                "enabled",
+
+                            securityHeaders =
+                                "enabled",
+
+                            rateLimiting =
+                                "enabled",
+
+                            authentication =
+                                "enabled",
+
+                            authorization =
+                                "enabled"
+                        },
+
+                    frontend =
+                        frontendOrigin,
+
+                    health =
+                        "/health",
+
+                    requestsApi =
+                        "/api/v1/requests"
+                });
+        })
+    .AllowAnonymous();
 
 /*
- * Health endpoint is intentionally not rate-limited.
+ * Health endpoint is intentionally anonymous and
+ * not rate-limited.
  */
 app.MapGet(
-    "/health",
-    async (
-        IOptions<AgentOptions> options,
-        AgentOpsDbContext dbContext,
-        HttpContext httpContext,
-        CancellationToken cancellationToken) =>
-    {
-        var databaseAvailable =
-            await dbContext.Database
-                .CanConnectAsync(
-                    cancellationToken);
-
-        var status =
-            databaseAvailable
-                ? "Healthy"
-                : "Degraded";
-
-        var response =
-            new
-            {
-                status,
-
-                service =
-                    serviceName,
-
-                version =
-                    serviceVersion,
-
-                correlationId =
-                    httpContext.TraceIdentifier,
-
-                agentProvider =
-                    options.Value.Provider,
-
-                deploymentTool =
-                    "GetRecentDeployments",
-
-                persistence =
-                    "SQLite",
-
-                databaseAvailable,
-
-                telemetry =
-                    "OpenTelemetry",
-
-                security =
-                    "Enabled",
-
-                timestamp =
-                    DateTimeOffset.UtcNow
-            };
-
-        if (databaseAvailable)
+        "/health",
+        async (
+            IOptions<AgentOptions> options,
+            IOptions<
+                AuthenticationOptions>
+                authenticationOptions,
+            AgentOpsDbContext dbContext,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
         {
-            return Results.Ok(response);
-        }
+            var databaseAvailable =
+                await dbContext.Database
+                    .CanConnectAsync(
+                        cancellationToken);
 
-        return Results.Json(
-            response,
-            statusCode:
-                StatusCodes
-                    .Status503ServiceUnavailable);
-    });
+            var status =
+                databaseAvailable
+                    ? "Healthy"
+                    : "Degraded";
+
+            var authenticationMode =
+                authenticationOptions
+                    .Value
+                    .Enabled
+                    ? "MicrosoftEntraId"
+                    : "Development";
+
+            var response =
+                new
+                {
+                    status,
+
+                    service =
+                        serviceName,
+
+                    version =
+                        serviceVersion,
+
+                    correlationId =
+                        httpContext.TraceIdentifier,
+
+                    agentProvider =
+                        options.Value.Provider,
+
+                    deploymentTool =
+                        "GetRecentDeployments",
+
+                    persistence =
+                        "SQLite",
+
+                    databaseAvailable,
+
+                    telemetry =
+                        "OpenTelemetry",
+
+                    security =
+                        "Enabled",
+
+                    authentication =
+                        authenticationMode,
+
+                    timestamp =
+                        DateTimeOffset.UtcNow
+                };
+
+            if (databaseAvailable)
+            {
+                return Results.Ok(
+                    response);
+            }
+
+            return Results.Json(
+                response,
+                statusCode:
+                    StatusCodes
+                        .Status503ServiceUnavailable);
+        })
+    .AllowAnonymous();
 
 /*
  * Apply checked-in EF Core migrations.
  *
- * Production deployments should run migrations as a
- * controlled deployment step rather than from every
- * application process.
+ * Production deployments should run migrations as
+ * a controlled deployment step rather than from
+ * every application process.
  */
 using (var migrationScope =
        app.Services.CreateScope())
@@ -634,23 +735,41 @@ static string GetClientPartitionKey(
     HttpContext httpContext)
 {
     /*
-     * Prefer the authenticated identity when available.
+     * Prefer the authenticated subject identifier.
+     * This remains stable even when the display name
+     * changes.
+     */
+    var subject =
+        httpContext.User.FindFirst(
+            "sub")
+        ?.Value;
+
+    if (!string.IsNullOrWhiteSpace(
+            subject))
+    {
+        return $"user:{subject}";
+    }
+
+    /*
+     * Fall back to the authenticated name when the
+     * token or local principal does not provide sub.
      */
     var userName =
         httpContext.User.Identity?.Name;
 
-    if (!string.IsNullOrWhiteSpace(userName))
+    if (!string.IsNullOrWhiteSpace(
+            userName))
     {
         return $"user:{userName}";
     }
 
     /*
-     * For local development, this normally resolves to
-     * the loopback address.
+     * For local development, this normally resolves
+     * to the loopback address.
      *
      * In production behind a trusted reverse proxy,
-     * configure ForwardedHeaders before relying on the
-     * remote IP address.
+     * configure ForwardedHeaders before relying on
+     * the remote IP address.
      */
     var remoteAddress =
         httpContext.Connection
@@ -667,7 +786,8 @@ static string GetClientPartitionKey(
 }
 
 /*
- * Keep this declaration at the absolute end of the file.
- * It enables WebApplicationFactory-based integration tests.
+ * Keep this declaration at the absolute end of the
+ * file. It enables WebApplicationFactory-based
+ * integration tests.
  */
 public partial class Program;

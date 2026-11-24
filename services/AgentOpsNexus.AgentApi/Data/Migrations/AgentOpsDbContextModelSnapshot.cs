@@ -49,6 +49,16 @@ namespace AgentOpsNexus.AgentApi.Data.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("OwnerDisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OwnerSubjectId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Response")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -84,6 +94,8 @@ namespace AgentOpsNexus.AgentApi.Data.Migrations
                     b.HasIndex("RetriedFromRequestId");
 
                     b.HasIndex("Status");
+
+                    b.HasIndex("OwnerSubjectId", "CreatedAt");
 
                     b.ToTable("AgentRequests", (string)null);
                 });

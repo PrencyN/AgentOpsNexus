@@ -11,5 +11,7 @@ public sealed record RequestDetailsResponse(
     bool Retryable,
     int AttemptNumber,
     Guid? RetriedFromRequestId,
+    string OwnerSubjectId,
+    string OwnerDisplayName,
     DateTimeOffset CreatedAt,
     DateTimeOffset? CompletedAt);

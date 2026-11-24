@@ -10,55 +10,85 @@ import {
   useState,
 } from "react";
 import "./App.css";
-import { ErrorPanel } from "./components/ErrorPanel";
-import { RequestForm } from "./components/RequestForm";
-import { RequestHistory } from "./components/RequestHistory";
-import { ResponsePanel } from "./components/ResponsePanel";
-import { useAgentRequest } from "./hooks/useAgentRequest";
-import { getRequestHistory } from "./services/agentApi";
+import {
+  UserMenu,
+} from "./auth/UserMenu";
+import {
+  ErrorPanel,
+} from "./components/ErrorPanel";
+import {
+  RequestForm,
+} from "./components/RequestForm";
+import {
+  RequestHistory,
+} from "./components/RequestHistory";
+import {
+  ResponsePanel,
+} from "./components/ResponsePanel";
+import {
+  useAgentRequest,
+} from "./hooks/useAgentRequest";
+import {
+  getRequestHistory,
+} from "./services/agentApi";
 import type {
   CreateAgentRequest,
   RequestDetails,
 } from "./types/agent";
 
 function App() {
-  const prefersDarkTheme = useMemo(
-    () =>
-      window.matchMedia(
-        "(prefers-color-scheme: dark)",
-      ).matches,
-    [],
-  );
+  const prefersDarkTheme =
+    useMemo(
+      () =>
+        window.matchMedia(
+          "(prefers-color-scheme: dark)",
+        ).matches,
+      [],
+    );
 
-  const [history, setHistory] = useState<
-    RequestDetails[]
-  >([]);
+  const [history, setHistory] =
+    useState<RequestDetails[]>([]);
 
-  const [historyLoading, setHistoryLoading] =
+  const [
+    historyLoading,
+    setHistoryLoading,
+  ] =
     useState(false);
 
-  const [historyError, setHistoryError] =
+  const [
+    historyError,
+    setHistoryError,
+  ] =
     useState<string | null>(null);
 
-  const loadHistory = useCallback(async () => {
-    setHistoryLoading(true);
-    setHistoryError(null);
+  const loadHistory =
+    useCallback(async () => {
+      setHistoryLoading(true);
+      setHistoryError(null);
 
-    try {
-      const requests =
-        await getRequestHistory();
+      try {
+        const requests =
+          await getRequestHistory();
 
-      setHistory(requests);
-    } catch (error) {
-      setHistoryError(
-        error instanceof Error
-          ? error.message
-          : "Request history could not be loaded.",
-      );
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, []);
+        setHistory(requests);
+      } catch (error) {
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : typeof error ===
+                  "object" &&
+                error !== null &&
+                "detail" in error &&
+                typeof error.detail ===
+                  "string"
+              ? error.detail
+              : "Request history could not " +
+                "be loaded.",
+        );
+      } finally {
+        setHistoryLoading(false);
+      }
+    }, []);
 
   const {
     status,
@@ -68,7 +98,9 @@ function App() {
     submit,
     retry,
     cancel,
-  } = useAgentRequest(loadHistory);
+  } =
+    useAgentRequest(
+      loadHistory);
 
   useEffect(() => {
     void loadHistory();
@@ -79,11 +111,13 @@ function App() {
     status === "streaming" ||
     status === "retrying";
 
-  const handleSubmit = async (
-    request: CreateAgentRequest,
-  ) => {
-    await submit(request);
-  };
+  const handleSubmit =
+    async (
+      request:
+        CreateAgentRequest,
+    ) => {
+      await submit(request);
+    };
 
   return (
     <FluentProvider
@@ -96,6 +130,10 @@ function App() {
       <div className="app-shell">
         <header className="app-header">
           <div className="app-header-content">
+            <div className="app-header-account-row">
+              <UserMenu />
+            </div>
+
             <div className="product-heading">
               <span className="product-mark">
                 AN
@@ -113,8 +151,9 @@ function App() {
             </div>
 
             <p className="app-description">
-              Investigate operational incidents using
-              bounded, evidence-grounded AI workflows.
+              Investigate operational incidents
+              using bounded, evidence-grounded AI
+              workflows.
             </p>
 
             <div
@@ -139,8 +178,13 @@ function App() {
         <main className="app-main">
           <div className="workspace-grid">
             <section
-              className="surface-panel request-panel"
-              aria-labelledby="new-investigation-title"
+              className={
+                "surface-panel " +
+                "request-panel"
+              }
+              aria-labelledby={
+                "new-investigation-title"
+              }
             >
               <div className="section-heading">
                 <div>
@@ -156,29 +200,40 @@ function App() {
                 <span
                   className={
                     busy
-                      ? "status-indicator status-running"
-                      : "status-indicator status-ready"
+                      ? "status-indicator " +
+                        "status-running"
+                      : "status-indicator " +
+                        "status-ready"
                   }
                 >
-                  {busy ? "Running" : "Ready"}
+                  {busy
+                    ? "Running"
+                    : "Ready"}
                 </span>
               </div>
 
               <p className="section-description">
-                Describe the incident and select the
-                affected environment and severity.
+                Describe the incident and select
+                the affected environment and
+                severity.
               </p>
 
               <RequestForm
                 busy={busy}
-                onSubmit={handleSubmit}
-                onCancel={cancel}
+                onSubmit={
+                  handleSubmit
+                }
+                onCancel={
+                  cancel
+                }
               />
             </section>
 
             <section
               className="result-panel"
-              aria-labelledby="investigation-result-title"
+              aria-labelledby={
+                "investigation-result-title"
+              }
             >
               {error && (
                 <ErrorPanel
@@ -197,7 +252,9 @@ function App() {
 
           <section
             className="history-section"
-            aria-labelledby="request-history-title"
+            aria-labelledby={
+              "request-history-title"
+            }
           >
             <div className="history-heading">
               <div>
@@ -210,17 +267,23 @@ function App() {
                 </h2>
 
                 <p className="section-description">
-                  Previous requests remain available
-                  after API restarts through SQLite
-                  persistence.
+                  Previous requests remain
+                  available after API restarts
+                  through SQLite persistence.
                 </p>
               </div>
 
               <button
                 type="button"
-                className="refresh-history-button"
-                onClick={() => void loadHistory()}
-                disabled={historyLoading}
+                className={
+                  "refresh-history-button"
+                }
+                onClick={() =>
+                  void loadHistory()
+                }
+                disabled={
+                  historyLoading
+                }
               >
                 {historyLoading
                   ? "Refreshing..."
@@ -239,7 +302,9 @@ function App() {
 
             <RequestHistory
               requests={history}
-              loading={historyLoading}
+              loading={
+                historyLoading
+              }
             />
           </section>
         </main>
@@ -250,7 +315,8 @@ function App() {
           </span>
 
           <span>
-            Evidence-grounded incident intelligence
+            Evidence-grounded incident
+            intelligence
           </span>
         </footer>
       </div>

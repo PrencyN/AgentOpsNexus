@@ -1,3 +1,9 @@
+import {
+  getApiAccessToken,
+} from "../auth/accessTokenProvider";
+import {
+  authenticationEnabled,
+} from "../auth/authConfig";
 import type {
   AgentStreamEvent,
   ApiError,
@@ -7,7 +13,67 @@ import type {
 } from "../types/agent";
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ?? "/api";
+  import.meta.env.VITE_API_BASE_URL ??
+  "/api";
+
+async function createHeaders(
+  initialHeaders?: HeadersInit,
+): Promise<Headers> {
+  const headers =
+    new Headers(initialHeaders);
+
+  const accessToken =
+    await getApiAccessToken();
+
+  if (
+    authenticationEnabled &&
+    !accessToken
+  ) {
+    throw {
+      title:
+        "Authentication required",
+
+      detail:
+        "No API access token is available. " +
+        "Sign in again and retry.",
+
+      status:
+        401,
+
+      code:
+        "ACCESS_TOKEN_UNAVAILABLE",
+
+      retryable:
+        false,
+    } satisfies ApiError;
+  }
+
+  if (accessToken) {
+    headers.set(
+      "Authorization",
+      `Bearer ${accessToken}`,
+    );
+  }
+
+  return headers;
+}
+
+async function authenticatedFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers =
+    await createHeaders(
+      init?.headers);
+
+  return await fetch(
+    input,
+    {
+      ...init,
+      headers,
+    },
+  );
+}
 
 async function parseError(
   response: Response,
@@ -41,11 +107,21 @@ async function parseError(
   } catch {
     return {
       title:
-        "Request failed",
+        response.status === 401
+          ? "Authentication required"
+          : response.status === 403
+            ? "Access denied"
+            : "Request failed",
 
       detail:
-        `The server returned HTTP ` +
-        `${response.status}.`,
+        response.status === 401
+          ? "The API rejected the access token. " +
+            "Sign out, sign in again, and retry."
+          : response.status === 403
+            ? "The signed-in account does not " +
+              "have the required AgentOps role."
+            : `The server returned HTTP ` +
+              `${response.status}.`,
 
       status:
         response.status,
@@ -60,12 +136,11 @@ function normalizeStreamUrl(
   streamUrl: string,
 ): string {
   /*
-   * Development and E2E requests should use the Vite
+   * Development and E2E requests use the Vite
    * same-origin /api proxy.
    *
-   * This prevents browser CORS and hostname mismatches
-   * when the API returns an absolute URL containing
-   * localhost while the browser uses 127.0.0.1.
+   * This prevents browser CORS and hostname
+   * mismatches when the API returns an absolute URL.
    */
   if (
     API_BASE_URL.startsWith("/")
@@ -113,7 +188,7 @@ export async function createRequest(
   signal?: AbortSignal,
 ): Promise<RequestAcceptedResponse> {
   const response =
-    await fetch(
+    await authenticatedFetch(
       `${API_BASE_URL}/v1/requests`,
       {
         method:
@@ -154,7 +229,7 @@ export async function retryRequest(
   signal?: AbortSignal,
 ): Promise<RequestAcceptedResponse> {
   const response =
-    await fetch(
+    await authenticatedFetch(
       `${API_BASE_URL}/v1/requests/` +
       `${requestId}/retry`,
       {
@@ -183,10 +258,11 @@ export async function retryRequest(
   };
 }
 
-export async function getRequestHistory():
+export async function
+  getRequestHistory():
   Promise<RequestDetails[]> {
   const response =
-    await fetch(
+    await authenticatedFetch(
       `${API_BASE_URL}/v1/requests`,
     );
 
@@ -259,11 +335,10 @@ export async function streamRequest(
 ): Promise<void> {
   const normalizedUrl =
     normalizeStreamUrl(
-      streamUrl,
-    );
+      streamUrl);
 
   const response =
-    await fetch(
+    await authenticatedFetch(
       normalizedUrl,
       {
         method:
@@ -290,8 +365,7 @@ export async function streamRequest(
 
   const contentType =
     response.headers.get(
-      "content-type",
-    );
+      "content-type");
 
   if (
     !contentType
@@ -325,7 +399,8 @@ export async function streamRequest(
   const decoder =
     new TextDecoder();
 
-  let buffer = "";
+  let buffer =
+    "";
 
   try {
     while (true) {
@@ -359,7 +434,8 @@ export async function streamRequest(
         );
 
       const blocks =
-        buffer.split("\n\n");
+        buffer.split(
+          "\n\n");
 
       buffer =
         blocks.pop() ?? "";
@@ -369,8 +445,7 @@ export async function streamRequest(
       ) {
         const event =
           parseEventBlock(
-            block,
-          );
+            block);
 
         if (event) {
           onEvent(event);
@@ -389,8 +464,7 @@ export async function streamRequest(
     if (finalBlock) {
       const event =
         parseEventBlock(
-          finalBlock,
-        );
+          finalBlock);
 
       if (event) {
         onEvent(event);

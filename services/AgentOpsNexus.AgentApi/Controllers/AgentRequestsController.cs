@@ -1,9 +1,10 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AgentOpsNexus.AgentApi.Agents;
 using AgentOpsNexus.AgentApi.Contracts;
 using AgentOpsNexus.AgentApi.Domain;
 using AgentOpsNexus.AgentApi.Repositories;
 using AgentOpsNexus.AgentApi.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 
@@ -27,6 +28,9 @@ public sealed class AgentRequestsController
     private readonly IncidentInputPolicy
         _inputPolicy;
 
+    private readonly ICurrentUserAccessor
+        _currentUserAccessor;
+
     private readonly ILogger<
         AgentRequestsController>
         _logger;
@@ -35,15 +39,29 @@ public sealed class AgentRequestsController
         IAgentRequestRepository repository,
         IIncidentAgent agent,
         IncidentInputPolicy inputPolicy,
+        ICurrentUserAccessor currentUserAccessor,
         ILogger<AgentRequestsController> logger)
     {
-        _repository = repository;
-        _agent = agent;
-        _inputPolicy = inputPolicy;
-        _logger = logger;
+        _repository =
+            repository;
+
+        _agent =
+            agent;
+
+        _inputPolicy =
+            inputPolicy;
+
+        _currentUserAccessor =
+            currentUserAccessor;
+
+        _logger =
+            logger;
     }
 
     [HttpPost]
+    [Authorize(
+        Policy =
+            AgentOpsPolicies.CreateRequests)]
     [EnableRateLimiting(
         "investigation-create")]
     [ProducesResponseType<
@@ -52,6 +70,10 @@ public sealed class AgentRequestsController
     [ProducesResponseType<
         ValidationProblemDetails>(
             StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(
+        StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(
+        StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status429TooManyRequests)]
     public async Task<
@@ -72,42 +94,60 @@ public sealed class AgentRequestsController
                     status:
                         StatusCodes
                             .Status400BadRequest,
+
                     code:
                         policyResult.ErrorCode
                         ??
                         "INVALID_INCIDENT_DESCRIPTION",
+
                     title:
                         "Incident description rejected",
+
                     detail:
                         policyResult.ErrorMessage
                         ??
                         "The incident description " +
                         "is invalid.",
+
                     retryable:
                         false);
 
-            return BadRequest(problem);
+            return BadRequest(
+                problem);
         }
 
-        var correlationId =
-            HttpContext.TraceIdentifier;
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
 
         var record =
             new AgentRequestRecord(
                 id:
                     Guid.NewGuid(),
+
                 message:
                     policyResult.NormalizedInput!,
+
                 environment:
                     request.Environment,
+
                 severity:
                     request.Severity,
+
                 simulateFailure:
                     request.SimulateFailure,
+
                 createdAt:
                     DateTimeOffset.UtcNow,
+
                 correlationId:
-                    correlationId);
+                    HttpContext.TraceIdentifier,
+
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                ownerDisplayName:
+                    currentUser.DisplayName);
 
         await _repository.AddAsync(
             record,
@@ -139,10 +179,17 @@ public sealed class AgentRequestsController
     }
 
     [HttpGet]
+    [Authorize(
+        Policy =
+            AgentOpsPolicies.ReadRequests)]
     [ProducesResponseType<
         IReadOnlyCollection<
             RequestDetailsResponse>>(
                 StatusCodes.Status200OK)]
+    [ProducesResponseType(
+        StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(
+        StatusCodes.Status403Forbidden)]
     public async Task<
         ActionResult<
             IReadOnlyCollection<
@@ -150,22 +197,41 @@ public sealed class AgentRequestsController
         GetAll(
             CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var requests =
             await _repository.GetAllAsync(
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         var response =
             requests
-                .Select(MapResponse)
+                .Select(
+                    MapResponse)
                 .ToArray();
 
-        return Ok(response);
+        return Ok(
+            response);
     }
 
     [HttpGet("{requestId:guid}")]
+    [Authorize(
+        Policy =
+            AgentOpsPolicies.ReadRequests)]
     [ProducesResponseType<
         RequestDetailsResponse>(
             StatusCodes.Status200OK)]
+    [ProducesResponseType(
+        StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(
+        StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status404NotFound)]
     public async Task<
@@ -174,34 +240,37 @@ public sealed class AgentRequestsController
             Guid requestId,
             CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var request =
             await _repository.GetAsync(
                 requestId,
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         if (request is null)
         {
             return NotFound(
-                CreateProblem(
-                    status:
-                        StatusCodes
-                            .Status404NotFound,
-                    code:
-                        "REQUEST_NOT_FOUND",
-                    title:
-                        "Request not found",
-                    detail:
-                        $"No request exists with ID " +
-                        $"{requestId}.",
-                    retryable:
-                        false));
+                CreateRequestNotFoundProblem(
+                    requestId));
         }
 
         return Ok(
-            MapResponse(request));
+            MapResponse(
+                request));
     }
 
     [HttpPost("{requestId:guid}/retry")]
+    [Authorize(
+        Policy =
+            AgentOpsPolicies.CreateRequests)]
     [EnableRateLimiting(
         "investigation-create")]
     [ProducesResponseType<
@@ -209,6 +278,10 @@ public sealed class AgentRequestsController
             StatusCodes.Status202Accepted)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(
+        StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(
+        StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(
@@ -219,27 +292,26 @@ public sealed class AgentRequestsController
             Guid requestId,
             CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var original =
             await _repository.GetAsync(
                 requestId,
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         if (original is null)
         {
             return NotFound(
-                CreateProblem(
-                    status:
-                        StatusCodes
-                            .Status404NotFound,
-                    code:
-                        "REQUEST_NOT_FOUND",
-                    title:
-                        "Request not found",
-                    detail:
-                        $"No request exists with ID " +
-                        $"{requestId}.",
-                    retryable:
-                        false));
+                CreateRequestNotFoundProblem(
+                    requestId));
         }
 
         if (!original.Retryable)
@@ -249,21 +321,25 @@ public sealed class AgentRequestsController
                     status:
                         StatusCodes
                             .Status400BadRequest,
+
                     code:
                         "REQUEST_NOT_RETRYABLE",
+
                     title:
                         "Request cannot be retried",
+
                     detail:
                         "Only failed or cancelled " +
                         "retryable requests can be " +
                         "retried.",
+
                     retryable:
                         false));
         }
 
         /*
          * The persisted message already passed the
-         * IncidentInputPolicy during the original
+         * incident-input policy during the original
          * request. Re-evaluate it as defense in depth.
          */
         var policyResult =
@@ -277,42 +353,66 @@ public sealed class AgentRequestsController
                     status:
                         StatusCodes
                             .Status400BadRequest,
+
                     code:
                         policyResult.ErrorCode
                         ??
                         "INVALID_INCIDENT_DESCRIPTION",
+
                     title:
                         "Stored incident description " +
                         "rejected",
+
                     detail:
                         policyResult.ErrorMessage
                         ??
                         "The stored incident " +
                         "description is invalid.",
+
                     retryable:
                         false));
         }
 
+        /*
+         * Preserve the original ownership.
+         *
+         * This remains true when an administrator
+         * retries another user's failed request.
+         */
         var retry =
             new AgentRequestRecord(
                 id:
                     Guid.NewGuid(),
+
                 message:
                     policyResult.NormalizedInput!,
+
                 environment:
                     original.Environment,
+
                 severity:
                     original.Severity,
+
                 simulateFailure:
                     false,
+
                 attemptNumber:
                     original.AttemptNumber + 1,
+
                 retriedFromRequestId:
                     original.Id,
+
                 createdAt:
                     DateTimeOffset.UtcNow,
+
                 correlationId:
-                    HttpContext.TraceIdentifier);
+                    HttpContext.TraceIdentifier,
+
+                ownerSubjectId:
+                    original.OwnerSubjectId,
+
+                ownerDisplayName:
+                    original.OwnerDisplayName);
 
         await _repository.AddAsync(
             retry,
@@ -341,10 +441,17 @@ public sealed class AgentRequestsController
     }
 
     [HttpGet("{requestId:guid}/stream")]
+    [Authorize(
+        Policy =
+            AgentOpsPolicies.ReadRequests)]
     [EnableRateLimiting(
         "investigation-stream")]
     [ProducesResponseType(
         StatusCodes.Status200OK)]
+    [ProducesResponseType(
+        StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(
+        StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(
         StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(
@@ -355,9 +462,19 @@ public sealed class AgentRequestsController
         Guid requestId,
         CancellationToken cancellationToken)
     {
+        var currentUser =
+            _currentUserAccessor
+                .GetCurrentUser();
+
         var request =
             await _repository.GetAsync(
                 requestId,
+                ownerSubjectId:
+                    currentUser.SubjectId,
+
+                includeAllOwners:
+                    currentUser.IsAdministrator,
+
                 cancellationToken);
 
         if (request is null)
@@ -367,19 +484,8 @@ public sealed class AgentRequestsController
                     .Status404NotFound;
 
             await Response.WriteAsJsonAsync(
-                CreateProblem(
-                    status:
-                        StatusCodes
-                            .Status404NotFound,
-                    code:
-                        "REQUEST_NOT_FOUND",
-                    title:
-                        "Request not found",
-                    detail:
-                        $"No request exists with ID " +
-                        $"{requestId}.",
-                    retryable:
-                        false),
+                CreateRequestNotFoundProblem(
+                    requestId),
                 cancellationToken);
 
             return;
@@ -397,13 +503,17 @@ public sealed class AgentRequestsController
                     status:
                         StatusCodes
                             .Status409Conflict,
+
                     code:
                         "REQUEST_ALREADY_COMPLETED",
+
                     title:
                         "Request already completed",
+
                     detail:
                         "A completed request cannot " +
                         "be streamed again.",
+
                     retryable:
                         false),
                 cancellationToken);
@@ -492,9 +602,11 @@ public sealed class AgentRequestsController
             var failureEvent =
                 new AgentStreamEvent(
                     "agent.failed",
+
                     "The AI service is temporarily " +
                     "unavailable. You can retry this " +
                     "request.",
+
                     DateTimeOffset.UtcNow);
 
             await WriteEventAsync(
@@ -551,16 +663,48 @@ public sealed class AgentRequestsController
             request.Environment,
             request.Severity,
             request.Status.ToString(),
+
             string.IsNullOrWhiteSpace(
                 request.Response)
                 ? null
                 : request.Response,
+
             request.ErrorCode,
             request.Retryable,
             request.AttemptNumber,
             request.RetriedFromRequestId,
+            request.OwnerSubjectId,
+            request.OwnerDisplayName,
             request.CreatedAt,
             request.CompletedAt);
+    }
+
+    private ProblemDetails
+        CreateRequestNotFoundProblem(
+            Guid requestId)
+    {
+        /*
+         * This response is used both for unknown IDs
+         * and records owned by another user. Returning
+         * the same 404 prevents resource enumeration.
+         */
+        return CreateProblem(
+            status:
+                StatusCodes
+                    .Status404NotFound,
+
+            code:
+                "REQUEST_NOT_FOUND",
+
+            title:
+                "Request not found",
+
+            detail:
+                $"No request exists with ID " +
+                $"{requestId}.",
+
+            retryable:
+                false);
     }
 
     private ProblemDetails CreateProblem(
@@ -573,15 +717,22 @@ public sealed class AgentRequestsController
         var problem =
             new ProblemDetails
             {
-                Status = status,
+                Status =
+                    status,
 
-                Title = title,
+                Title =
+                    title,
 
-                Detail = detail,
+                Detail =
+                    detail,
 
                 Type =
-                    "https://agentops-nexus/errors/" +
-                    code.ToLowerInvariant()
+                    string.Concat(
+                        "https",
+                        "://",
+                        "agentops-nexus",
+                        "/errors/",
+                        code.ToLowerInvariant())
             };
 
         problem.Extensions["code"] =
