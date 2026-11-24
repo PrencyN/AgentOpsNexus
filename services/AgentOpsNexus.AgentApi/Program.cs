@@ -3,6 +3,7 @@ using AgentOpsNexus.AgentApi.Agents;
 using AgentOpsNexus.AgentApi.Configuration;
 using AgentOpsNexus.AgentApi.Data;
 using AgentOpsNexus.AgentApi.Evaluation;
+using AgentOpsNexus.AgentApi.Health;
 using AgentOpsNexus.AgentApi.Middleware;
 using AgentOpsNexus.AgentApi.Observability;
 using AgentOpsNexus.AgentApi.Repositories;
@@ -10,6 +11,7 @@ using AgentOpsNexus.AgentApi.Security;
 using AgentOpsNexus.AgentApi.Services.Deployments;
 using AgentOpsNexus.AgentApi.Tools;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -65,6 +67,21 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<
     ICurrentUserAccessor,
     HttpContextCurrentUserAccessor>();
+
+/*
+ * Production readiness configuration.
+ */
+builder.Services
+    .AddOptions<ProductionOptions>()
+    .Bind(
+        builder.Configuration.GetSection(
+            ProductionOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<
+    IValidateOptions<ProductionOptions>,
+    ProductionOptionsValidator>();
 
 
 /*
@@ -200,6 +217,33 @@ builder.Services.AddDbContext<
              * in EF diagnostic logs.
              */
         });
+
+
+
+/*
+ * Health checks.
+ *
+ * Liveness selects no dependency checks.
+ * Readiness selects checks tagged "ready".
+ */
+builder.Services
+    .AddHealthChecks()
+    .AddCheck<DatabaseReadinessCheck>(
+        name:
+            "agentops-database",
+
+        failureStatus:
+            Microsoft.Extensions
+                .Diagnostics
+                .HealthChecks
+                .HealthStatus
+                .Unhealthy,
+
+        tags:
+            new[]
+            {
+                "ready"
+            });
 
 builder.Services.AddScoped<
     IAgentRequestRepository,
@@ -460,14 +504,33 @@ builder.Services.AddRateLimiter(
     });
 
 /*
- * React development origin.
+ * Frontend origins are environment-specific.
+ *
+ * Development configures localhost.
+ * Production must explicitly configure every
+ * allowed SPA origin.
  */
-var frontendOrigin =
-    string.Concat(
-        "http",
-        "://",
-        "localhost",
-        ":5173");
+var productionOptions =
+    builder.Configuration
+        .GetSection(
+            ProductionOptions.SectionName)
+        .Get<ProductionOptions>()
+    ??
+    new ProductionOptions();
+
+var allowedFrontendOrigins =
+    productionOptions.AllowedOrigins
+        .Where(
+            origin =>
+                !string.IsNullOrWhiteSpace(
+                    origin))
+        .Select(
+            origin =>
+                origin.Trim()
+                    .TrimEnd('/'))
+        .Distinct(
+            StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
 builder.Services.AddCors(
     options =>
@@ -476,9 +539,26 @@ builder.Services.AddCors(
             "Frontend",
             policy =>
             {
+                if (
+                    allowedFrontendOrigins
+                        .Length > 0)
+                {
+                    policy.WithOrigins(
+                        allowedFrontendOrigins);
+                }
+                else
+                {
+                    /*
+                     * No origins are allowed when none
+                     * are configured. Production
+                     * validation prevents this state.
+                     */
+                    policy.SetIsOriginAllowed(
+                        _ =>
+                            false);
+                }
+
                 policy
-                    .WithOrigins(
-                        frontendOrigin)
                     .AllowAnyHeader()
                     .AllowAnyMethod()
                     .WithExposedHeaders(
@@ -613,11 +693,21 @@ app.MapGet(
                                 "enabled"
                         },
 
-                    frontend =
-                        frontendOrigin,
+                    frontendOrigins  =
+                        allowedFrontendOrigins,
 
                     health =
-                        "/health",
+                        new
+                        {
+                            live =
+                                "/health/live",
+
+                            ready =
+                                "/health/ready",
+
+                            legacy =
+                                "/health"
+                        },
 
                     requestsApi =
                         "/api/v1/requests"
@@ -626,86 +716,64 @@ app.MapGet(
     .AllowAnonymous();
 
 /*
- * Health endpoint is intentionally anonymous and
- * not rate-limited.
+ * Liveness proves only that the application process
+ * is running. It deliberately performs no database
+ * or external dependency checks.
  */
-app.MapGet(
-        "/health",
-        async (
-            IOptions<AgentOptions> options,
-            IOptions<
-                AuthenticationOptions>
-                authenticationOptions,
-            AgentOpsDbContext dbContext,
-            HttpContext httpContext,
-            CancellationToken cancellationToken) =>
+app.MapHealthChecks(
+        "/health/live",
+        new HealthCheckOptions
         {
-            var databaseAvailable =
-                await dbContext.Database
-                    .CanConnectAsync(
-                        cancellationToken);
+            Predicate =
+                _ =>
+                    false,
 
-            var status =
-                databaseAvailable
-                    ? "Healthy"
-                    : "Degraded";
+            ResponseWriter =
+                HealthResponseWriter
+                    .WriteAsync
+        })
+    .AllowAnonymous();
 
-            var authenticationMode =
-                authenticationOptions
-                    .Value
-                    .Enabled
-                    ? "MicrosoftEntraId"
-                    : "Development";
+/*
+ * Readiness verifies dependencies required to serve
+ * investigation traffic.
+ */
+app.MapHealthChecks(
+        "/health/ready",
+        new HealthCheckOptions
+        {
+            Predicate =
+                registration =>
+                    registration.Tags
+                        .Contains(
+                            "ready"),
 
-            var response =
-                new
-                {
-                    status,
+            ResponseWriter =
+                HealthResponseWriter
+                    .WriteAsync
+        })
+    .AllowAnonymous();
 
-                    service =
-                        serviceName,
+/*
+ * Backward-compatible readiness endpoint.
+ *
+ * Existing local automation and Playwright continue
+ * to use /health while callers migrate to
+ * /health/ready.
+ */
+app.MapHealthChecks(
+        "/health",
+        new HealthCheckOptions
+        {
+            Predicate =
+                registration =>
+                    registration.Tags
+                        .Contains(
+                            "ready"),
 
-                    version =
-                        serviceVersion,
-
-                    correlationId =
-                        httpContext.TraceIdentifier,
-
-                    agentProvider =
-                        options.Value.Provider,
-
-                    deploymentTool =
-                        "GetRecentDeployments",
-
-                    persistence =
-                        "SQLite",
-
-                    databaseAvailable,
-
-                    telemetry =
-                        "OpenTelemetry",
-
-                    security =
-                        "Enabled",
-
-                    authentication =
-                        authenticationMode,
-
-                    timestamp =
-                        DateTimeOffset.UtcNow
-                };
-
-            if (databaseAvailable)
-            {
-                return Results.Ok(
-                    response);
-            }
-
-            return Results.Json(
-                response,
-                statusCode:
-                    StatusCodes
-                        .Status503ServiceUnavailable);
+            ResponseWriter =
+                HealthResponseWriter
+                    .WriteAsync
         })
     .AllowAnonymous();
 
@@ -716,9 +784,18 @@ app.MapGet(
  * a controlled deployment step rather than from
  * every application process.
  */
-using (var migrationScope =
-       app.Services.CreateScope())
+var runtimeProductionOptions =
+    app.Services
+        .GetRequiredService<
+            IOptions<ProductionOptions>>()
+        .Value;
+
+if (runtimeProductionOptions
+    .ApplyDatabaseMigrations)
 {
+    using var migrationScope =
+        app.Services.CreateScope();
+
     var dbContext =
         migrationScope
             .ServiceProvider
